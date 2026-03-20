@@ -5,7 +5,7 @@ use crate::world::WorldData;
 use crate::quests::{QuestLog, QuestStatus};
 use crate::dialogue::{self, Dialogue, DialogueAction};
 use crate::inventory::{Item, ItemType};
-use crate::rendering::CameraOrbit;
+use crate::rendering::{CameraOrbit, AttackAnimState, DodgeRollState};
 use crate::alchemy::{AlchemyRecipe, check_can_craft};
 
 /// Event for playing sounds
@@ -214,6 +214,7 @@ fn monster_ai(
     mut log: ResMut<MessageLog>,
     mut ai_timers: ResMut<MonsterAiTimer>,
     mut sound_events: EventWriter<GameSound>,
+    mut combat_anim: EventWriter<CombatAnimEvent>,
 ) {
     // Ensure we have timers for all monsters
     while ai_timers.timers.len() < world.monsters.len() {
@@ -276,10 +277,16 @@ fn monster_ai(
         if should_attack {
             ai_timers.timers[idx] = 1.5; // Reset cooldown
             let damage = world.monsters[idx].attack;
+            let mx = world.monsters[idx].x;
+            let my = world.monsters[idx].y;
             let actual_damage = player.take_damage(damage);
             let mname = world.monsters[idx].name.clone();
             log.add(format!("{} atakuje! -{} HP", mname, actual_damage));
             sound_events.send(GameSound::SwordHit);
+
+            // Emit monster attack animation at player position
+            combat_anim.send(CombatAnimEvent::MonsterHit { position: (player_x, player_y) });
+            combat_anim.send(CombatAnimEvent::PlayerSlash { position: (mx, my) });
             
             if !player.is_alive() {
                 log.add("Gerard upadł w walce!".into());
@@ -322,9 +329,28 @@ fn exploration_keys(
     mut attack_cooldown: ResMut<AttackCooldown>,
     time: Res<Time>,
     mut sound_events: EventWriter<GameSound>,
+    mut combat_anim: EventWriter<CombatAnimEvent>,
+    mut attack_anim: ResMut<AttackAnimState>,
+    mut dodge_state: ResMut<DodgeRollState>,
 ) {
     // Decrement attack cooldown
     attack_cooldown.timer -= time.delta_secs();
+
+    // Dodge roll on Space
+    if keys.just_pressed(KeyCode::Space) && !dodge_state.active {
+        let dir = match player.direction {
+            Direction::Up => Vec3::new(0.0, 0.0, -1.0),
+            Direction::Down => Vec3::new(0.0, 0.0, 1.0),
+            Direction::Left => Vec3::new(-1.0, 0.0, 0.0),
+            Direction::Right => Vec3::new(1.0, 0.0, 0.0),
+        };
+        dodge_state.active = true;
+        dodge_state.timer = 0.3;
+        dodge_state.direction = dir;
+        dodge_state.start_pos = Vec3::new(player.x, 0.0, player.y);
+        combat_anim.send(CombatAnimEvent::PlayerDodge { position: (player.x, player.y) });
+        sound_events.send(GameSound::Footstep);
+    }
 
     if keys.just_pressed(KeyCode::KeyE) {
         let px = player.x;
@@ -356,11 +382,21 @@ fn exploration_keys(
         if let Some(mi) = world.find_monster_at(tx, ty, 1.5) {
             if attack_cooldown.timer <= 0.0 {
                 let mname = world.monsters[mi].name.clone();
+                let mx = world.monsters[mi].x;
+                let my = world.monsters[mi].y;
                 let damage = player.attack_power(false); // default steel sword
                 let actual_damage = world.monsters[mi].take_damage(damage);
                 log.add(format!("Atakujesz: {}! -{} HP", mname, actual_damage));
                 sound_events.send(GameSound::SwordHit);
                 attack_cooldown.timer = 0.5; // 0.5s cooldown
+
+                // Emit slash animation at player and hit at monster
+                combat_anim.send(CombatAnimEvent::PlayerSlash { position: (px, py) });
+                combat_anim.send(CombatAnimEvent::MonsterHit { position: (mx, my) });
+
+                // Trigger sword draw animation
+                attack_anim.is_attacking = true;
+                attack_anim.timer = 0.4;
                 
                 // Check if monster died
                 if !world.monsters[mi].alive {

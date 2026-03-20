@@ -31,6 +31,8 @@ impl Plugin for RenderingPlugin {
         })
         .init_resource::<DayNightCycle>()
         .insert_resource(WalkAnimState { phase: 0.0, last_x: 25.0, last_y: 18.0, is_moving: false })
+        .insert_resource(AttackAnimState { timer: 0.0, is_attacking: false })
+        .insert_resource(DodgeRollState { timer: 0.0, active: false, direction: Vec3::ZERO, start_pos: Vec3::ZERO })
         .add_event::<SpawnSignParticles>()
         .add_systems(OnEnter(GameScreen::Exploration), setup_3d_world)
         .add_systems(
@@ -46,7 +48,10 @@ impl Plugin for RenderingPlugin {
                 spawn_sign_particles_system,
                 update_quen_bubble,
                 animate_player_walk,
+                animate_sword_attack,
                 sync_monster_transforms,
+                update_monster_hp_bars,
+                dodge_roll_system,
                 spawn_combat_particles,
                 update_combat_particles,
             )
@@ -70,7 +75,30 @@ pub struct CameraOrbit {
 
 /// Marker for sword child entities on player
 #[derive(Component)]
-pub struct SwordMarker;
+pub struct SwordMarker {
+    pub is_steel: bool,
+    pub is_blade: bool,
+}
+
+/// Monster HP bar marker
+#[derive(Component)]
+pub struct MonsterHpBar(pub usize); // monster index
+
+/// Player attack animation state
+#[derive(Resource)]
+pub struct AttackAnimState {
+    pub timer: f32,       // counts down from 0.4 to 0
+    pub is_attacking: bool,
+}
+
+/// Dodge roll state
+#[derive(Resource)]
+pub struct DodgeRollState {
+    pub timer: f32,
+    pub active: bool,
+    pub direction: Vec3,
+    pub start_pos: Vec3,
+}
 
 /// Day/night cycle resource
 #[derive(Resource)]
@@ -333,14 +361,14 @@ fn setup_3d_world(
             MeshMaterial3d(steel_blade_mat.clone()),
             Transform::from_xyz(-0.12, 1.25, -0.18)
                 .with_rotation(Quat::from_rotation_z(0.15)),
-            SwordMarker,
+            SwordMarker { is_steel: true, is_blade: true },
         ));
         parent.spawn((
             Mesh3d(sword_handle_mesh.clone()),
             MeshMaterial3d(handle_mat.clone()),
             Transform::from_xyz(-0.12, 0.82, -0.18)
                 .with_rotation(Quat::from_rotation_z(0.15)),
-            SwordMarker,
+            SwordMarker { is_steel: true, is_blade: false },
         ));
         // Silver sword (back, right)
         parent.spawn((
@@ -348,14 +376,14 @@ fn setup_3d_world(
             MeshMaterial3d(silver_blade_mat.clone()),
             Transform::from_xyz(0.12, 1.25, -0.18)
                 .with_rotation(Quat::from_rotation_z(-0.15)),
-            SwordMarker,
+            SwordMarker { is_steel: false, is_blade: true },
         ));
         parent.spawn((
             Mesh3d(sword_handle_mesh.clone()),
             MeshMaterial3d(handle_mat.clone()),
             Transform::from_xyz(0.12, 0.82, -0.18)
                 .with_rotation(Quat::from_rotation_z(-0.15)),
-            SwordMarker,
+            SwordMarker { is_steel: false, is_blade: false },
         ));
     });
 
@@ -540,6 +568,39 @@ fn setup_3d_world(
                 }
             }
         });
+    }
+
+    // === Spawn Monster HP Bars ===
+    let hp_bar_bg_mesh = meshes.add(Cuboid::new(0.6, 0.08, 0.02));
+    let hp_bar_fg_mesh = meshes.add(Cuboid::new(0.58, 0.06, 0.03));
+    let hp_bg_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.2, 0.0, 0.0, 0.9),
+        unlit: true,
+        ..default()
+    });
+    let hp_fg_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.1, 0.1, 1.0),
+        emissive: LinearRgba::new(2.0, 0.0, 0.0, 1.0),
+        unlit: true,
+        ..default()
+    });
+
+    for (i, monster) in world.monsters.iter().enumerate() {
+        let h = monster.monster_type.height();
+        // Background bar
+        commands.spawn((
+            Mesh3d(hp_bar_bg_mesh.clone()),
+            MeshMaterial3d(hp_bg_mat.clone()),
+            Transform::from_xyz(monster.x, h + 0.4, monster.y),
+            MonsterHpBar(i),
+        ));
+        // Foreground bar (HP fill) — tagged with index + 10000 to distinguish
+        commands.spawn((
+            Mesh3d(hp_bar_fg_mesh.clone()),
+            MeshMaterial3d(hp_fg_mat.clone()),
+            Transform::from_xyz(monster.x, h + 0.4, monster.y + 0.01),
+            MonsterHpBar(i + 10000), // offset to mark as foreground
+        ));
     }
 
     // === Spawn Loot (with rotation marker) ===
@@ -898,6 +959,158 @@ fn animate_player_walk(
         };
 
         transform.rotation = Quat::from_rotation_x(swing);
+    }
+}
+
+// ==================== SWORD ATTACK ANIMATION ====================
+
+fn animate_sword_attack(
+    time: Res<Time>,
+    mut anim: ResMut<AttackAnimState>,
+    mut sword_q: Query<(&SwordMarker, &mut Transform)>,
+) {
+    if anim.is_attacking {
+        anim.timer -= time.delta_secs();
+        if anim.timer <= 0.0 {
+            anim.is_attacking = false;
+        }
+    }
+
+    for (sword, mut t) in &mut sword_q {
+        if !sword.is_steel { continue; } // only animate steel sword
+
+        if anim.is_attacking {
+            // Swing progress 0..1
+            let progress = 1.0 - (anim.timer / 0.4).clamp(0.0, 1.0);
+            let swing = (progress * std::f32::consts::PI).sin(); // 0 -> 1 -> 0
+
+            if sword.is_blade {
+                // Blade: move from back to right hand, swing forward
+                let back_pos = Vec3::new(-0.12, 1.25, -0.18);
+                let hand_pos = Vec3::new(0.3, 1.1, 0.3);
+                t.translation = back_pos.lerp(hand_pos, swing);
+                t.rotation = Quat::from_euler(EulerRot::XYZ,
+                    -swing * 1.5,  // swing forward
+                    swing * 0.5,   // rotate outward
+                    0.15 - swing * 0.8,
+                );
+            } else {
+                // Handle follows blade
+                let back_pos = Vec3::new(-0.12, 0.82, -0.18);
+                let hand_pos = Vec3::new(0.3, 0.7, 0.2);
+                t.translation = back_pos.lerp(hand_pos, swing);
+                t.rotation = Quat::from_euler(EulerRot::XYZ,
+                    -swing * 1.5,
+                    swing * 0.5,
+                    0.15 - swing * 0.8,
+                );
+            }
+        } else {
+            // Rest position (on back)
+            if sword.is_blade {
+                t.translation = Vec3::new(-0.12, 1.25, -0.18);
+                t.rotation = Quat::from_rotation_z(0.15);
+            } else {
+                t.translation = Vec3::new(-0.12, 0.82, -0.18);
+                t.rotation = Quat::from_rotation_z(0.15);
+            }
+        }
+    }
+}
+
+// ==================== MONSTER HP BARS ====================
+
+fn update_monster_hp_bars(
+    world: Res<WorldData>,
+    cam_q: Query<&Transform, With<MainCamera>>,
+    mut hp_q: Query<(&MonsterHpBar, &mut Transform, &mut Visibility), Without<MainCamera>>,
+) {
+    let Ok(cam_t) = cam_q.get_single() else { return };
+
+    for (hp_bar, mut t, mut vis) in &mut hp_q {
+        let is_foreground = hp_bar.0 >= 10000;
+        let idx = if is_foreground { hp_bar.0 - 10000 } else { hp_bar.0 };
+
+        if idx >= world.monsters.len() { continue; }
+        let m = &world.monsters[idx];
+        let h = m.monster_type.height();
+
+        if !m.alive {
+            *vis = Visibility::Hidden;
+            continue;
+        }
+
+        // Only show when damaged
+        let hp_frac = m.health as f32 / m.max_health as f32;
+        if hp_frac >= 1.0 {
+            *vis = Visibility::Hidden;
+            continue;
+        }
+        *vis = Visibility::Inherited;
+
+        // Position above monster
+        t.translation.x = m.x;
+        t.translation.y = h + 0.4;
+        t.translation.z = m.y;
+
+        // Billboard: face the camera
+        let dir = cam_t.translation - t.translation;
+        if dir.length_squared() > 0.01 {
+            let flat_dir = Vec3::new(dir.x, 0.0, dir.z).normalize_or_zero();
+            if flat_dir.length_squared() > 0.01 {
+                t.rotation = Quat::from_rotation_y(flat_dir.x.atan2(flat_dir.z));
+            }
+        }
+
+        // Scale foreground bar by HP fraction
+        if is_foreground {
+            t.scale.x = hp_frac.max(0.01);
+            // Shift left to keep bar left-aligned
+            let offset = (1.0 - hp_frac) * 0.29;
+            t.translation.x = m.x - offset * t.rotation.mul_vec3(Vec3::X).x;
+        }
+    }
+}
+
+// ==================== DODGE ROLL ====================
+
+fn dodge_roll_system(
+    time: Res<Time>,
+    mut player: ResMut<Player>,
+    mut dodge: ResMut<DodgeRollState>,
+    mut player_q: Query<&mut Transform, With<PlayerMarker>>,
+) {
+    if !dodge.active { return; }
+
+    dodge.timer -= time.delta_secs();
+    let progress = 1.0 - (dodge.timer / 0.3).clamp(0.0, 1.0);
+
+    // Roll the player model
+    for mut t in &mut player_q {
+        let roll_angle = progress * std::f32::consts::TAU; // full 360 roll
+        let base_rot = match player.direction {
+            crate::player::Direction::Up => std::f32::consts::PI,
+            crate::player::Direction::Down => 0.0,
+            crate::player::Direction::Left => std::f32::consts::FRAC_PI_2,
+            crate::player::Direction::Right => -std::f32::consts::FRAC_PI_2,
+        };
+        t.rotation = Quat::from_rotation_y(base_rot) * Quat::from_rotation_z(roll_angle);
+    }
+
+    // Move player position during dodge
+    let dodge_dist = 2.0; // total tiles to dodge
+    let speed = dodge_dist / 0.3; // tiles per second
+    let dt = time.delta_secs();
+    player.x += dodge.direction.x * speed * dt;
+    player.y += dodge.direction.z * speed * dt;
+    player.visual_x = player.x;
+    player.visual_y = player.y;
+
+    if dodge.timer <= 0.0 {
+        dodge.active = false;
+        // Snap to grid
+        player.x = player.x.round();
+        player.y = player.y.round();
     }
 }
 
