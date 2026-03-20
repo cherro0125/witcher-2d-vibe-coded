@@ -1,0 +1,9 @@
+[package]
+name = "witcher_game"
+version = "0.1.0"
+edition = "2021"
+description = "Gra RPG w stylu Wiedźmin - Gerard z Rumii ze szkoły Dzika"
+
+[dependencies]
+ggez = "0.9"
+rand = "0.8"
