@@ -1,4 +1,4 @@
-/// Wiedźmin: Szkoła Dzika - Gra RPG
+/// Wiedźmin: Szkoła Dzika - Gra RPG 3D (Bevy)
 /// Główna postać: Gerard z Rumii ze szkoły Dzika
 
 mod player;
@@ -14,24 +14,23 @@ mod rendering;
 mod ui;
 mod game_state;
 
-use ggez::conf::{WindowMode, WindowSetup};
-use ggez::event;
-use ggez::ContextBuilder;
-
-use game_state::GameState;
-use rendering::{SCREEN_WIDTH, SCREEN_HEIGHT};
+use bevy::prelude::*;
+use game_state::{GameScreen, GamePlugin};
+use rendering::RenderingPlugin;
+use ui::UiPlugin;
 
 fn main() {
-    let (ctx, event_loop) = ContextBuilder::new("witcher_game", "Szkoła Dzika")
-        .window_setup(WindowSetup::default().title("Wiedźmin: Szkoła Dzika - Gerard z Rumii"))
-        .window_mode(
-            WindowMode::default()
-                .dimensions(SCREEN_WIDTH, SCREEN_HEIGHT)
-                .resizable(false),
-        )
-        .build()
-        .expect("Nie udało się zainicjalizować ggez!");
-
-    let state = GameState::new();
-    event::run(ctx, event_loop, state);
+    App::new()
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Wiedźmin: Szkoła Dzika - Gerard z Rumii [3D]".into(),
+                resolution: (1280.0, 720.0).into(),
+                resizable: false,
+                ..default()
+            }),
+            ..default()
+        }))
+        .init_state::<GameScreen>()
+        .add_plugins((GamePlugin, RenderingPlugin, UiPlugin))
+        .run();
 }

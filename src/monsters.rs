@@ -1,4 +1,5 @@
 /// Bestiariusz - potwory świata wiedźmińskiego
+use bevy::prelude::*;
 use crate::signs::SignType;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -11,8 +12,8 @@ pub enum MonsterType {
     Kikimora,
     Bazyliszek,
     Leszen,
-    Bandyta,    // człowiek
-    Dezercja,   // człowiek
+    Bandyta,
+    Dezercja,
 }
 
 impl MonsterType {
@@ -35,21 +36,41 @@ impl MonsterType {
         }
     }
 
-    pub fn color(&self) -> [f32; 4] {
+    pub fn color(&self) -> Color {
         match self {
-            MonsterType::Ghul => [0.6, 0.8, 0.2, 1.0],
-            MonsterType::Utopiec => [0.2, 0.5, 0.8, 1.0],
-            MonsterType::Gryf => [0.8, 0.6, 0.2, 1.0],
-            MonsterType::Wilkolak => [0.5, 0.3, 0.1, 1.0],
-            MonsterType::Endriaga => [0.7, 0.1, 0.1, 1.0],
-            MonsterType::Kikimora => [0.3, 0.3, 0.3, 1.0],
-            MonsterType::Bazyliszek => [0.8, 0.2, 0.8, 1.0],
-            MonsterType::Leszen => [0.1, 0.4, 0.1, 1.0],
-            MonsterType::Bandyta => [0.7, 0.5, 0.3, 1.0],
-            MonsterType::Dezercja => [0.6, 0.6, 0.4, 1.0],
+            MonsterType::Ghul => Color::srgba(0.6, 0.8, 0.2, 1.0),
+            MonsterType::Utopiec => Color::srgba(0.2, 0.5, 0.8, 1.0),
+            MonsterType::Gryf => Color::srgba(0.8, 0.6, 0.2, 1.0),
+            MonsterType::Wilkolak => Color::srgba(0.5, 0.3, 0.1, 1.0),
+            MonsterType::Endriaga => Color::srgba(0.7, 0.1, 0.1, 1.0),
+            MonsterType::Kikimora => Color::srgba(0.3, 0.3, 0.3, 1.0),
+            MonsterType::Bazyliszek => Color::srgba(0.8, 0.2, 0.8, 1.0),
+            MonsterType::Leszen => Color::srgba(0.1, 0.4, 0.1, 1.0),
+            MonsterType::Bandyta => Color::srgba(0.7, 0.5, 0.3, 1.0),
+            MonsterType::Dezercja => Color::srgba(0.6, 0.6, 0.4, 1.0),
+        }
+    }
+
+    /// Height of the 3D box representing this monster
+    pub fn height(&self) -> f32 {
+        match self {
+            MonsterType::Ghul => 0.8,
+            MonsterType::Utopiec => 0.7,
+            MonsterType::Gryf => 1.5,
+            MonsterType::Wilkolak => 1.4,
+            MonsterType::Endriaga => 0.9,
+            MonsterType::Kikimora => 1.0,
+            MonsterType::Bazyliszek => 1.6,
+            MonsterType::Leszen => 2.0,
+            MonsterType::Bandyta => 1.2,
+            MonsterType::Dezercja => 1.2,
         }
     }
 }
+
+/// Marker component for monster entities in the 3D world
+#[derive(Component)]
+pub struct MonsterMarker(pub usize); // index into WorldData.monsters
 
 #[derive(Debug, Clone)]
 pub struct Monster {

@@ -10,10 +10,10 @@ pub enum QuestStatus {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum QuestObjective {
-    KillMonster(String),      // nazwa potwora
-    TalkToNpc(String),        // id NPC
-    CollectItem(String, i32), // nazwa przedmiotu, ilość
-    GoToLocation(String),     // nazwa lokacji
+    KillMonster(String),
+    TalkToNpc(String),
+    CollectItem(String, i32),
+    GoToLocation(String),
 }
 
 #[derive(Debug, Clone)]
@@ -51,13 +51,16 @@ impl Quest {
             self.current_step += 1;
             if self.current_step >= self.steps.len() {
                 self.status = QuestStatus::Completed;
-                return true; // quest ukończony
+                return true;
             }
         }
         false
     }
 }
 
+use bevy::prelude::Resource;
+
+#[derive(Resource)]
 pub struct QuestLog {
     pub quests: Vec<Quest>,
     pub active_quest_index: Option<usize>,
@@ -66,147 +69,68 @@ pub struct QuestLog {
 impl QuestLog {
     pub fn new() -> Self {
         let quests = vec![
-            // Quest główny
             Quest {
                 id: "main_school".into(),
                 title: "Tajemnica Szkoły Dzika".into(),
-                description: "Odkryj tajemnicę zaginionej wiedzy Szkoły Dzika. Vesimir w zamku może wiedzieć więcej.".into(),
+                description: "Odkryj tajemnicę zaginionej wiedzy Szkoły Dzika.".into(),
                 status: QuestStatus::NotStarted,
                 steps: vec![
-                    QuestStep {
-                        description: "Porozmawiaj z Sołtysem Bogdanem w Wiosce Rumia".into(),
-                        objective: QuestObjective::TalkToNpc("soltys".into()),
-                        completed: false,
-                    },
-                    QuestStep {
-                        description: "Zabij ghule w Mrocznym Lesie".into(),
-                        objective: QuestObjective::KillMonster("Ghul".into()),
-                        completed: false,
-                    },
-                    QuestStep {
-                        description: "Porozmawiaj z Tajemniczym Elfem w lesie".into(),
-                        objective: QuestObjective::TalkToNpc("elf".into()),
-                        completed: false,
-                    },
-                    QuestStep {
-                        description: "Pokonaj Wilkołaka w Jaskini".into(),
-                        objective: QuestObjective::KillMonster("Wilkołak".into()),
-                        completed: false,
-                    },
-                    QuestStep {
-                        description: "Odwiedź Vesimira w Zamku".into(),
-                        objective: QuestObjective::TalkToNpc("vesimir".into()),
-                        completed: false,
-                    },
+                    QuestStep { description: "Porozmawiaj z Sołtysem Bogdanem w Wiosce Rumia".into(), objective: QuestObjective::TalkToNpc("soltys".into()), completed: false },
+                    QuestStep { description: "Zabij ghule w Mrocznym Lesie".into(), objective: QuestObjective::KillMonster("Ghul".into()), completed: false },
+                    QuestStep { description: "Porozmawiaj z Tajemniczym Elfem w lesie".into(), objective: QuestObjective::TalkToNpc("elf".into()), completed: false },
+                    QuestStep { description: "Pokonaj Wilkołaka w Jaskini".into(), objective: QuestObjective::KillMonster("Wilkołak".into()), completed: false },
+                    QuestStep { description: "Odwiedź Vesimira w Zamku".into(), objective: QuestObjective::TalkToNpc("vesimir".into()), completed: false },
                 ],
-                current_step: 0,
-                experience_reward: 500,
-                gold_reward: 200,
-                is_main_quest: true,
+                current_step: 0, experience_reward: 500, gold_reward: 200, is_main_quest: true,
             },
-            // Kontrakt: Utopce na bagnach
             Quest {
                 id: "contract_drowners".into(),
                 title: "Kontrakt: Utopce na Bagnach".into(),
-                description: "Sołtys prosi o oczyszczenie bagien z utopców nękających wieśniaków.".into(),
+                description: "Sołtys prosi o oczyszczenie bagien z utopców.".into(),
                 status: QuestStatus::NotStarted,
                 steps: vec![
-                    QuestStep {
-                        description: "Porozmawiaj z Sołtysem o kontrakcie".into(),
-                        objective: QuestObjective::TalkToNpc("soltys".into()),
-                        completed: false,
-                    },
-                    QuestStep {
-                        description: "Zabij utopce na Bagnach".into(),
-                        objective: QuestObjective::KillMonster("Utopiec".into()),
-                        completed: false,
-                    },
-                    QuestStep {
-                        description: "Wróć do Sołtysa po nagrodę".into(),
-                        objective: QuestObjective::TalkToNpc("soltys".into()),
-                        completed: false,
-                    },
+                    QuestStep { description: "Porozmawiaj z Sołtysem o kontrakcie".into(), objective: QuestObjective::TalkToNpc("soltys".into()), completed: false },
+                    QuestStep { description: "Zabij utopce na Bagnach".into(), objective: QuestObjective::KillMonster("Utopiec".into()), completed: false },
+                    QuestStep { description: "Wróć do Sołtysa po nagrodę".into(), objective: QuestObjective::TalkToNpc("soltys".into()), completed: false },
                 ],
-                current_step: 0,
-                experience_reward: 150,
-                gold_reward: 100,
-                is_main_quest: false,
+                current_step: 0, experience_reward: 150, gold_reward: 100, is_main_quest: false,
             },
-            // Kontrakt: Endriagi
             Quest {
                 id: "contract_endriaga".into(),
                 title: "Kontrakt: Endriagi w Lesie".into(),
-                description: "Endriagi zaatakowały drwali w lesie. Trzeba je wytępić.".into(),
+                description: "Endriagi zaatakowały drwali w lesie.".into(),
                 status: QuestStatus::NotStarted,
                 steps: vec![
-                    QuestStep {
-                        description: "Porozmawiaj z Zielarką Bożeną".into(),
-                        objective: QuestObjective::TalkToNpc("zielarka".into()),
-                        completed: false,
-                    },
-                    QuestStep {
-                        description: "Zabij endriagi w Mrocznym Lesie".into(),
-                        objective: QuestObjective::KillMonster("Endriaga".into()),
-                        completed: false,
-                    },
-                    QuestStep {
-                        description: "Wróć do Zielarki po nagrodę".into(),
-                        objective: QuestObjective::TalkToNpc("zielarka".into()),
-                        completed: false,
-                    },
+                    QuestStep { description: "Porozmawiaj z Zielarką Bożeną".into(), objective: QuestObjective::TalkToNpc("zielarka".into()), completed: false },
+                    QuestStep { description: "Zabij endriagi w Mrocznym Lesie".into(), objective: QuestObjective::KillMonster("Endriaga".into()), completed: false },
+                    QuestStep { description: "Wróć do Zielarki po nagrodę".into(), objective: QuestObjective::TalkToNpc("zielarka".into()), completed: false },
                 ],
-                current_step: 0,
-                experience_reward: 200,
-                gold_reward: 120,
-                is_main_quest: false,
+                current_step: 0, experience_reward: 200, gold_reward: 120, is_main_quest: false,
             },
-            // Kontrakt: Bazyliszek
             Quest {
                 id: "contract_basilisk".into(),
                 title: "Kontrakt: Bazyliszek w Jaskini".into(),
-                description: "W jaskini zagnieździł się potężny bazyliszek. To zlecenie nie dla żółtodziobów.".into(),
+                description: "W jaskini zagnieździł się potężny bazyliszek.".into(),
                 status: QuestStatus::NotStarted,
                 steps: vec![
-                    QuestStep {
-                        description: "Znajdź i zabij Bazyliszka w Jaskini".into(),
-                        objective: QuestObjective::KillMonster("Bazyliszek".into()),
-                        completed: false,
-                    },
+                    QuestStep { description: "Znajdź i zabij Bazyliszka w Jaskini".into(), objective: QuestObjective::KillMonster("Bazyliszek".into()), completed: false },
                 ],
-                current_step: 0,
-                experience_reward: 300,
-                gold_reward: 200,
-                is_main_quest: false,
+                current_step: 0, experience_reward: 300, gold_reward: 200, is_main_quest: false,
             },
-            // Kontrakt: Leszy
             Quest {
                 id: "contract_leshen".into(),
                 title: "Kontrakt: Leszy - Strażnik Lasu".into(),
-                description: "Starożytny Leszy terroryzuje okolice. Tylko doświadczony wiedźmin da radę.".into(),
+                description: "Starożytny Leszy terroryzuje okolice.".into(),
                 status: QuestStatus::NotStarted,
                 steps: vec![
-                    QuestStep {
-                        description: "Porozmawiaj z Elfem o Leszym".into(),
-                        objective: QuestObjective::TalkToNpc("elf".into()),
-                        completed: false,
-                    },
-                    QuestStep {
-                        description: "Znajdź i pokonaj Leszego".into(),
-                        objective: QuestObjective::KillMonster("Leszy".into()),
-                        completed: false,
-                    },
+                    QuestStep { description: "Porozmawiaj z Elfem o Leszym".into(), objective: QuestObjective::TalkToNpc("elf".into()), completed: false },
+                    QuestStep { description: "Znajdź i pokonaj Leszego".into(), objective: QuestObjective::KillMonster("Leszy".into()), completed: false },
                 ],
-                current_step: 0,
-                experience_reward: 400,
-                gold_reward: 250,
-                is_main_quest: false,
+                current_step: 0, experience_reward: 400, gold_reward: 250, is_main_quest: false,
             },
         ];
 
-        QuestLog {
-            quests,
-            active_quest_index: None,
-        }
+        QuestLog { quests, active_quest_index: None }
     }
 
     pub fn start_quest(&mut self, quest_id: &str) {

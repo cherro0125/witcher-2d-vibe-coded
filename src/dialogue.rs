@@ -17,7 +17,7 @@ pub enum DialogueAction {
     Trade,
     Heal,
     EndDialogue,
-    Axii(String), // next_node jeśli Axii się uda
+    Axii(String),
 }
 
 #[derive(Debug, Clone)]

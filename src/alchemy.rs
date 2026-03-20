@@ -5,7 +5,7 @@ use crate::inventory::Item;
 pub struct AlchemyRecipe {
     pub name: String,
     pub description: String,
-    pub ingredients: Vec<(String, i32)>, // (nazwa składnika, ilość)
+    pub ingredients: Vec<(String, i32)>,
     pub result: Item,
 }
 

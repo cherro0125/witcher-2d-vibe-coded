@@ -67,8 +67,7 @@ impl Combat {
 
         match action {
             CombatAction::AttackSteel => {
-                let use_silver = false;
-                let damage = player.attack_power(use_silver);
+                let damage = player.attack_power(false);
                 let bonus = if monster.monster_type.is_human() { 5 } else { 0 };
                 let total = damage + bonus;
                 let actual = monster.take_damage(total);
@@ -77,8 +76,7 @@ impl Combat {
                 ));
             }
             CombatAction::AttackSilver => {
-                let use_silver = true;
-                let damage = player.attack_power(use_silver);
+                let damage = player.attack_power(true);
                 let bonus = if !monster.monster_type.is_human() { 10 } else { 0 };
                 let total = damage + bonus;
                 let actual = monster.take_damage(total);
@@ -99,7 +97,7 @@ impl Combat {
                             let dmg = monster.take_damage(power + bonus);
                             monster.stunned_turns += if is_weakness { 2 } else { 1 };
                             self.log.add(format!(
-                                "Gerard używa {}! {} obrażeń, wróg oszołomiony!{}", 
+                                "Gerard używa {}! {} obrażeń, wróg oszołomiony!{}",
                                 sign_name, dmg,
                                 if is_weakness { " SŁABOŚĆ!" } else { "" }
                             ));
@@ -138,7 +136,7 @@ impl Combat {
                     }
                 } else {
                     self.log.add("Za mało wytrzymałości na znak!".into());
-                    return; // nie kończymy tury
+                    return;
                 }
             }
             CombatAction::UsePotion(inv_idx) => {
@@ -179,7 +177,6 @@ impl Combat {
             }
         }
 
-        // Sprawdź czy potwór żyje
         if !monster.is_alive() {
             self.state = CombatState::Victory;
             self.log.add(format!("=== {} POKONANY! ===", monster.name));
@@ -202,7 +199,6 @@ impl Combat {
         let attack = monster.attack_power();
 
         if self.player_dodging {
-            // 60% szans na unik
             let dodge_roll = (self.turn * 7 + attack) % 10;
             if dodge_roll < 6 {
                 self.log.add(format!("Gerard unika ataku {}!", monster.name));
@@ -232,7 +228,7 @@ impl Combat {
 
         player.regenerate_tick();
         if monster.slowed {
-            monster.slowed = false; // Yrden trwa jedną turę
+            monster.slowed = false;
         }
         self.state = CombatState::PlayerTurn;
         self.turn += 1;

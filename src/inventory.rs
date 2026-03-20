@@ -14,19 +14,6 @@ pub enum ItemType {
     Junk,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum WeaponMaterial {
-    Steel,
-    Silver,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ArmorWeight {
-    Light,
-    Medium,
-    Heavy,
-}
-
 #[derive(Debug, Clone)]
 pub struct Item {
     pub name: String,
@@ -52,12 +39,8 @@ impl Item {
             name: name.to_string(),
             description: format!("Stalowy miecz - {} pkt ataku", attack),
             item_type: ItemType::SteelSword,
-            attack_bonus: attack,
-            defense_bonus: 0,
-            health_restore: 0,
-            stamina_restore: 0,
-            value,
-            quantity: 1,
+            attack_bonus: attack, defense_bonus: 0,
+            health_restore: 0, stamina_restore: 0, value, quantity: 1,
         }
     }
 
@@ -66,12 +49,8 @@ impl Item {
             name: name.to_string(),
             description: format!("Srebrny miecz - {} pkt ataku na potwory", attack),
             item_type: ItemType::SilverSword,
-            attack_bonus: attack,
-            defense_bonus: 0,
-            health_restore: 0,
-            stamina_restore: 0,
-            value,
-            quantity: 1,
+            attack_bonus: attack, defense_bonus: 0,
+            health_restore: 0, stamina_restore: 0, value, quantity: 1,
         }
     }
 
@@ -80,12 +59,8 @@ impl Item {
             name: name.to_string(),
             description: format!("Zbroja - {} pkt obrony", defense),
             item_type: ItemType::Armor,
-            attack_bonus: 0,
-            defense_bonus: defense,
-            health_restore: 0,
-            stamina_restore: 0,
-            value,
-            quantity: 1,
+            attack_bonus: 0, defense_bonus: defense,
+            health_restore: 0, stamina_restore: 0, value, quantity: 1,
         }
     }
 
@@ -94,12 +69,8 @@ impl Item {
             name: name.to_string(),
             description: format!("Eliksir - przywraca {} zdrowia, {} wytrzymałości", health, stamina),
             item_type: ItemType::Potion,
-            attack_bonus: 0,
-            defense_bonus: 0,
-            health_restore: health,
-            stamina_restore: stamina,
-            value,
-            quantity: 1,
+            attack_bonus: 0, defense_bonus: 0,
+            health_restore: health, stamina_restore: stamina, value, quantity: 1,
         }
     }
 
@@ -108,12 +79,8 @@ impl Item {
             name: name.to_string(),
             description: format!("Olej na broń - +{} do ataku", attack),
             item_type: ItemType::Oil,
-            attack_bonus: attack,
-            defense_bonus: 0,
-            health_restore: 0,
-            stamina_restore: 0,
-            value,
-            quantity: 1,
+            attack_bonus: attack, defense_bonus: 0,
+            health_restore: 0, stamina_restore: 0, value, quantity: 1,
         }
     }
 
@@ -122,12 +89,8 @@ impl Item {
             name: name.to_string(),
             description: format!("Bomba - {} pkt obrażeń obszarowych", power),
             item_type: ItemType::Bomb,
-            attack_bonus: power,
-            defense_bonus: 0,
-            health_restore: 0,
-            stamina_restore: 0,
-            value,
-            quantity: 1,
+            attack_bonus: power, defense_bonus: 0,
+            health_restore: 0, stamina_restore: 0, value, quantity: 1,
         }
     }
 
@@ -136,12 +99,8 @@ impl Item {
             name: name.to_string(),
             description: "Składnik alchemiczny".to_string(),
             item_type: ItemType::AlchemyIngredient,
-            attack_bonus: 0,
-            defense_bonus: 0,
-            health_restore: 0,
-            stamina_restore: 0,
-            value,
-            quantity: 1,
+            attack_bonus: 0, defense_bonus: 0,
+            health_restore: 0, stamina_restore: 0, value, quantity: 1,
         }
     }
 
@@ -150,12 +109,8 @@ impl Item {
             name: name.to_string(),
             description: desc.to_string(),
             item_type: ItemType::QuestItem,
-            attack_bonus: 0,
-            defense_bonus: 0,
-            health_restore: 0,
-            stamina_restore: 0,
-            value: 0,
-            quantity: 1,
+            attack_bonus: 0, defense_bonus: 0,
+            health_restore: 0, stamina_restore: 0, value: 0, quantity: 1,
         }
     }
 }
@@ -173,17 +128,13 @@ pub struct Inventory {
 impl Inventory {
     pub fn new() -> Self {
         Inventory {
-            items: Vec::new(),
-            gold: 100,
-            equipped_steel_sword: None,
-            equipped_silver_sword: None,
-            equipped_armor: None,
-            active_oil: None,
+            items: Vec::new(), gold: 100,
+            equipped_steel_sword: None, equipped_silver_sword: None,
+            equipped_armor: None, active_oil: None,
         }
     }
 
     pub fn add_item(&mut self, item: Item) {
-        // Sprawdź czy taki przedmiot stackowalny już istnieje
         if matches!(item.item_type, ItemType::AlchemyIngredient | ItemType::Potion | ItemType::Bomb) {
             for existing in &mut self.items {
                 if existing.name == item.name {
@@ -202,12 +153,10 @@ impl Inventory {
                 item.quantity -= 1;
                 return Some(item.clone());
             }
-            // Aktualizuj indeksy wyposażenia
             if self.equipped_steel_sword == Some(index) { self.equipped_steel_sword = None; }
             if self.equipped_silver_sword == Some(index) { self.equipped_silver_sword = None; }
             if self.equipped_armor == Some(index) { self.equipped_armor = None; }
             if self.active_oil == Some(index) { self.active_oil = None; }
-            // Przesuń indeksy
             if let Some(ref mut idx) = self.equipped_steel_sword { if *idx > index { *idx -= 1; } }
             if let Some(ref mut idx) = self.equipped_silver_sword { if *idx > index { *idx -= 1; } }
             if let Some(ref mut idx) = self.equipped_armor { if *idx > index { *idx -= 1; } }
@@ -230,11 +179,7 @@ impl Inventory {
     }
 
     pub fn get_attack_bonus(&self, use_silver: bool) -> i32 {
-        let sword_idx = if use_silver {
-            self.equipped_silver_sword
-        } else {
-            self.equipped_steel_sword
-        };
+        let sword_idx = if use_silver { self.equipped_silver_sword } else { self.equipped_steel_sword };
         let sword_bonus = sword_idx.map_or(0, |i| self.items[i].attack_bonus);
         let oil_bonus = self.active_oil.map_or(0, |i| self.items[i].attack_bonus);
         sword_bonus + oil_bonus

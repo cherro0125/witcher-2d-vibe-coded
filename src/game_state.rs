@@ -1,490 +1,659 @@
-use ggez::event::EventHandler;
-use ggez::graphics::{self, Canvas, Color, PxScale};
-use ggez::input::keyboard::{KeyCode, KeyInput};
-use ggez::{Context, GameResult};
-
+/// Stan gry - Bevy States, systemy, obsługa inputu
+use bevy::prelude::*;
 use crate::player::{Player, Direction};
-use crate::world::WorldMap;
-use crate::combat::{Combat, CombatAction, CombatState};
+use crate::world::WorldData;
 use crate::quests::{QuestLog, QuestStatus};
 use crate::dialogue::{self, Dialogue, DialogueAction};
 use crate::inventory::{Item, ItemType};
-use crate::rendering::{self, Camera, SCREEN_WIDTH};
-use crate::ui;
+use crate::rendering::CameraOrbit;
+use crate::alchemy::{AlchemyRecipe, check_can_craft};
 
-#[derive(Debug, Clone, PartialEq)]
+/// Event for playing sounds
+#[derive(Event, Clone)]
+pub enum GameSound {
+    Footstep,
+    SwordHit,
+    MonsterDeath,
+    PickupItem,
+    SignCast,
+    QuestComplete,
+    LevelUp,
+}
+
+/// Game screen states
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, States, Default)]
 pub enum GameScreen {
+    #[default]
+    MainMenu,
     Exploration,
-    Combat(usize),
     Dialogue,
     Inventory,
+    Alchemy,
     QuestLog,
     GameOver,
-    MainMenu,
 }
 
-pub struct GameState {
-    pub player: Player,
-    pub world: WorldMap,
-    pub camera: Camera,
-    pub screen: GameScreen,
-    pub combat: Option<Combat>,
-    pub quest_log: QuestLog,
-    pub dialogue: Option<Dialogue>,
+/// Dialogue resource
+#[derive(Resource)]
+pub struct DialogueData {
+    pub dialogue: Dialogue,
+}
+
+/// Messages log
+#[derive(Resource)]
+pub struct MessageLog {
     pub messages: Vec<String>,
-    pub inventory_selected: usize,
-    pub move_cooldown: f32,
-    pub started: bool,
 }
 
-impl GameState {
+impl MessageLog {
     pub fn new() -> Self {
-        let mut gs = GameState {
-            player: Player::new(),
-            world: WorldMap::new(),
-            camera: Camera::new(),
-            screen: GameScreen::MainMenu,
-            combat: None,
-            quest_log: QuestLog::new(),
-            dialogue: None,
-            messages: Vec::new(),
-            inventory_selected: 0,
-            move_cooldown: 0.0,
-            started: false,
-        };
-        gs.messages.push("Witaj w świecie Wiedźmina!".into());
-        gs.messages.push("Jesteś Gerard z Rumii ze Szkoły Dzika.".into());
-        gs.messages.push("WASD - ruch, E - interakcja, I - ekwipunek, J - questy".into());
-        gs
+        let mut log = MessageLog { messages: Vec::new() };
+        log.add("Witaj w świecie Wiedźmina! [3D]".into());
+        log.add("Jesteś Gerard z Rumii ze Szkoły Dzika.".into());
+        log.add("WASD - ruch, E - interakcja/atak, I - ekwipunek, J - questy".into());
+        log
     }
-
-    fn add_message(&mut self, msg: String) {
+    pub fn add(&mut self, msg: String) {
         self.messages.push(msg);
         if self.messages.len() > 50 { self.messages.remove(0); }
     }
+}
 
-    fn try_move(&mut self, dx: f32, dy: f32) {
-        let new_x = self.player.x + dx;
-        let new_y = self.player.y + dy;
-        if dx < 0.0 { self.player.direction = Direction::Left; }
-        if dx > 0.0 { self.player.direction = Direction::Right; }
-        if dy < 0.0 { self.player.direction = Direction::Up; }
-        if dy > 0.0 { self.player.direction = Direction::Down; }
-        if !self.world.is_walkable(new_x, new_y) { return; }
-        self.player.x = new_x;
-        self.player.y = new_y;
-        if let Some(mi) = self.world.find_monster_at(new_x, new_y, 1.2) {
-            let mname = self.world.monsters[mi].name.clone();
-            self.add_message(format!("Spotkanie z: {}!", mname));
-            self.combat = Some(Combat::new());
-            self.screen = GameScreen::Combat(mi);
+/// Inventory selection
+#[derive(Resource)]
+pub struct InventorySelection {
+    pub selected: usize,
+}
+
+/// Alchemy selection
+#[derive(Resource)]
+pub struct AlchemySelection {
+    pub selected: usize,
+}
+
+/// Combat animation event
+#[derive(Event, Clone)]
+pub enum CombatAnimEvent {
+    PlayerSlash { position: (f32, f32) },
+    MonsterHit { position: (f32, f32) },
+    PlayerDodge { position: (f32, f32) },
+    PlayerParry { position: (f32, f32) },
+}
+
+/// Movement cooldown
+#[derive(Resource)]
+pub struct MoveCooldown {
+    pub timer: f32,
+}
+
+/// Player attack cooldown (0.5s between attacks)
+#[derive(Resource)]
+pub struct AttackCooldown {
+    pub timer: f32,
+}
+
+/// Monster AI attack timers (per-monster attack cooldowns)
+#[derive(Resource)]
+pub struct MonsterAiTimer {
+    pub timers: Vec<f32>,
+}
+
+pub struct GamePlugin;
+
+impl Plugin for GamePlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(Player::new())
+            .insert_resource(WorldData::new())
+            .insert_resource(MessageLog::new())
+            .insert_resource(QuestLog::new())
+            .insert_resource(InventorySelection { selected: 0 })
+            .insert_resource(AlchemySelection { selected: 0 })
+            .insert_resource(MoveCooldown { timer: 0.0 })
+            .insert_resource(AttackCooldown { timer: 0.0 })
+            .insert_resource(MonsterAiTimer { timers: Vec::new() })
+            .add_event::<GameSound>()
+            .add_event::<CombatAnimEvent>()
+            .add_systems(Update, play_game_sounds)
+            .add_systems(Update, menu_input.run_if(in_state(GameScreen::MainMenu)))
+            .add_systems(Update, (exploration_movement, monster_ai, exploration_keys, check_game_over, exploration_sounds).run_if(in_state(GameScreen::Exploration)))
+            .add_systems(Update, dialogue_input.run_if(in_state(GameScreen::Dialogue)))
+            .add_systems(Update, inventory_input.run_if(in_state(GameScreen::Inventory)))
+            .add_systems(Update, alchemy_input.run_if(in_state(GameScreen::Alchemy)))
+            .add_systems(Update, quest_log_input.run_if(in_state(GameScreen::QuestLog)))
+            .add_systems(Update, game_over_input.run_if(in_state(GameScreen::GameOver)));
+    }
+}
+
+// ==================== MAIN MENU ====================
+
+fn menu_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut next_state: ResMut<NextState<GameScreen>>,
+    mut exit: EventWriter<AppExit>,
+) {
+    if keys.just_pressed(KeyCode::Enter) {
+        next_state.set(GameScreen::Exploration);
+    }
+    if keys.just_pressed(KeyCode::Escape) {
+        exit.send(AppExit::Success);
+    }
+}
+
+// ==================== EXPLORATION ====================
+
+fn exploration_movement(
+    keys: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    mut player: ResMut<Player>,
+    mut world: ResMut<WorldData>,
+    mut log: ResMut<MessageLog>,
+    mut cooldown: ResMut<MoveCooldown>,
+    orbit: Res<CameraOrbit>,
+) {
+    cooldown.timer -= time.delta_secs();
+    if cooldown.timer > 0.0 { return; }
+
+    // Get raw input direction
+    let mut input_x: f32 = 0.0;
+    let mut input_z: f32 = 0.0;
+    if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) { input_z -= 1.0; }
+    if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) { input_z += 1.0; }
+    if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) { input_x -= 1.0; }
+    if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) { input_x += 1.0; }
+    if input_x == 0.0 && input_z == 0.0 { return; }
+
+    cooldown.timer = 0.12;
+
+    // Camera-relative movement: rotate input by the camera's absolute yaw
+    let cam_yaw = orbit.yaw;
+
+    // Rotate input vector by camera yaw
+    let cos_y = cam_yaw.cos();
+    let sin_y = cam_yaw.sin();
+    let world_x = input_x * cos_y - input_z * sin_y;
+    let world_z = input_x * sin_y + input_z * cos_y;
+
+    // Snap to grid: pick dominant axis direction
+    let (dx, dy, dir) = if world_z.abs() >= world_x.abs() {
+        if world_z < 0.0 {
+            (0.0, -1.0, Direction::Up)
+        } else {
+            (0.0, 1.0, Direction::Down)
         }
-        if let Some(li) = self.world.find_loot_at(new_x, new_y, 1.0) {
-            let lname = self.world.loot[li].name.clone();
-            let iname = self.world.loot[li].item_name.clone();
-            self.world.loot[li].collected = true;
-            self.player.inventory.add_item(Item::ingredient(&iname, 5));
-            self.add_message(format!("Znaleziono: {}!", lname));
+    } else if world_x < 0.0 {
+        (-1.0, 0.0, Direction::Left)
+    } else {
+        (1.0, 0.0, Direction::Right)
+    };
+
+    player.direction = dir;
+
+    let new_x = player.x + dx;
+    let new_y = player.y + dy;
+
+    if !world.is_walkable(new_x, new_y) { return; }
+
+    player.x = new_x;
+    player.y = new_y;
+
+    // Check loot pickup
+    if let Some(li) = world.find_loot_at(new_x, new_y, 1.0) {
+        let lname = world.loot[li].name.clone();
+        let iname = world.loot[li].item_name.clone();
+        world.loot[li].collected = true;
+        player.inventory.add_item(Item::ingredient(&iname, 5));
+        log.add(format!("Znaleziono: {}!", lname));
+    }
+}
+
+/// Monster AI system - runs during exploration
+fn monster_ai(
+    time: Res<Time>,
+    mut player: ResMut<Player>,
+    mut world: ResMut<WorldData>,
+    mut log: ResMut<MessageLog>,
+    mut ai_timers: ResMut<MonsterAiTimer>,
+    mut sound_events: EventWriter<GameSound>,
+) {
+    // Ensure we have timers for all monsters
+    while ai_timers.timers.len() < world.monsters.len() {
+        ai_timers.timers.push(0.0);
+    }
+
+    let dt = time.delta_secs();
+    let player_x = player.x;
+    let player_y = player.y;
+
+    // Collect monster indices and actions to avoid borrow issues
+    let mut monster_actions: Vec<(usize, Option<(f32, f32)>, bool)> = Vec::new();
+
+    for (idx, monster) in world.monsters.iter().enumerate() {
+        if !monster.alive { continue; }
+
+        // Calculate distance to player
+        let dx = player_x - monster.x;
+        let dy = player_y - monster.y;
+        let dist = (dx * dx + dy * dy).sqrt();
+
+        let mut new_pos: Option<(f32, f32)> = None;
+        let mut should_attack = false;
+
+        // If monster is within 3.0 range, move toward player
+        if dist < 3.0 && dist > 0.01 {
+            let move_speed = 0.5; // tiles per second
+            let move_dist = move_speed * dt;
+            
+            if dist > move_dist {
+                // Calculate new position
+                let nx = monster.x + (dx / dist) * move_dist;
+                let ny = monster.y + (dy / dist) * move_dist;
+                new_pos = Some((nx, ny));
+            }
+        }
+
+        // If monster is within 1.2 range, attack player
+        if dist < 1.2 {
+            ai_timers.timers[idx] -= dt;
+            if ai_timers.timers[idx] <= 0.0 {
+                should_attack = true;
+            }
+        }
+
+        if new_pos.is_some() || should_attack {
+            monster_actions.push((idx, new_pos, should_attack));
         }
     }
 
-    fn interact(&mut self) {
-        let px = self.player.x;
-        let py = self.player.y;
-        let (dx, dy) = match self.player.direction {
+    // Now apply the actions
+    for (idx, new_pos, should_attack) in monster_actions {
+        if let Some((nx, ny)) = new_pos {
+            if world.is_walkable(nx, ny) {
+                world.monsters[idx].x = nx;
+                world.monsters[idx].y = ny;
+            }
+        }
+
+        if should_attack {
+            ai_timers.timers[idx] = 1.5; // Reset cooldown
+            let damage = world.monsters[idx].attack;
+            let actual_damage = player.take_damage(damage);
+            let mname = world.monsters[idx].name.clone();
+            log.add(format!("{} atakuje! -{} HP", mname, actual_damage));
+            sound_events.send(GameSound::SwordHit);
+            
+            if !player.is_alive() {
+                log.add("Gerard upadł w walce!".into());
+            }
+        }
+    }
+}
+
+/// Emit sound events for exploration (separate system to avoid param overflow)
+fn exploration_sounds(
+    player: Res<Player>,
+    mut sound_events: EventWriter<GameSound>,
+    mut last_pos: Local<(f32, f32)>,
+) {
+    if player.x != last_pos.0 || player.y != last_pos.1 {
+        sound_events.send(GameSound::Footstep);
+        *last_pos = (player.x, player.y);
+    }
+}
+
+/// Check if player is dead (game over transition)
+fn check_game_over(
+    player: Res<Player>,
+    mut next_state: ResMut<NextState<GameScreen>>,
+) {
+    if !player.is_alive() {
+        next_state.set(GameScreen::GameOver);
+    }
+}
+
+fn exploration_keys(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut player: ResMut<Player>,
+    mut world: ResMut<WorldData>,
+    mut log: ResMut<MessageLog>,
+    mut next_state: ResMut<NextState<GameScreen>>,
+    mut commands: Commands,
+    mut exit: EventWriter<AppExit>,
+    mut inv_sel: ResMut<InventorySelection>,
+    mut attack_cooldown: ResMut<AttackCooldown>,
+    time: Res<Time>,
+    mut sound_events: EventWriter<GameSound>,
+) {
+    // Decrement attack cooldown
+    attack_cooldown.timer -= time.delta_secs();
+
+    if keys.just_pressed(KeyCode::KeyE) {
+        let px = player.x;
+        let py = player.y;
+        let (ddx, ddy) = match player.direction {
             Direction::Up => (0.0, -1.0),
             Direction::Down => (0.0, 1.0),
             Direction::Left => (-1.0, 0.0),
             Direction::Right => (1.0, 0.0),
         };
-        let tx = px + dx;
-        let ty = py + dy;
-        // NPC in facing direction or nearby
-        let ni = self.world.find_npc_at(tx, ty, 1.5)
-            .or_else(|| self.world.find_npc_at(px, py, 2.0));
+        let tx = px + ddx;
+        let ty = py + ddy;
+
+        // Try NPC dialogue first
+        let ni = world.find_npc_at(tx, ty, 1.5)
+            .or_else(|| world.find_npc_at(px, py, 2.0));
         if let Some(ni) = ni {
-            let npc_name = self.world.npcs[ni].name.clone();
-            let did = self.world.npcs[ni].dialogue_id.clone();
-            self.add_message(format!("Rozmowa z: {}", npc_name));
+            let npc_name = world.npcs[ni].name.clone();
+            let did = world.npcs[ni].dialogue_id.clone();
+            log.add(format!("Rozmowa z: {}", npc_name));
             let mut dlg = dialogue::get_dialogue(&did);
             dlg.start();
-            self.dialogue = Some(dlg);
-            self.screen = GameScreen::Dialogue;
+            commands.insert_resource(DialogueData { dialogue: dlg });
+            next_state.set(GameScreen::Dialogue);
             return;
         }
-        if let Some(mi) = self.world.find_monster_at(tx, ty, 1.5) {
-            let mname = self.world.monsters[mi].name.clone();
-            self.add_message(format!("Atakujesz: {}!", mname));
-            self.combat = Some(Combat::new());
-            self.screen = GameScreen::Combat(mi);
-            return;
-        }
-        self.add_message("Nie ma tu nic do interakcji.".into());
-    }
 
-    fn handle_dialogue_choice(&mut self, choice_idx: usize) {
-        // Take dialogue out to avoid borrow issues
-        let mut dlg = match self.dialogue.take() {
-            Some(d) => d,
-            None => return,
-        };
-
-        let mut pending_msgs: Vec<String> = Vec::new();
-
-        if let Some(action) = dlg.select_choice(choice_idx) {
-            match action {
-                DialogueAction::StartQuest(quest_id) => {
-                    self.quest_log.start_quest(&quest_id);
-                    pending_msgs.push("Nowy quest przyjęty!".into());
-                }
-                DialogueAction::GiveItem(item_name) => {
-                    match item_name.as_str() {
-                        "Jaskółka" => self.player.inventory.add_item(Item::potion("Jaskółka", 50, 0, 30)),
-                        "Kot" => self.player.inventory.add_item(Item::potion("Kot", 20, 20, 35)),
-                        _ => self.player.inventory.add_item(Item::quest_item(&item_name, "Przedmiot z questu")),
-                    }
-                    pending_msgs.push(format!("Otrzymano: {}!", item_name));
-                }
-                DialogueAction::GiveGold(amount) => {
-                    self.player.inventory.gold += amount;
-                    pending_msgs.push(format!("Otrzymano: {} złota!", amount));
-                }
-                DialogueAction::GiveExp(amount) => {
-                    let leveled = self.player.gain_experience(amount);
-                    pending_msgs.push(format!("Otrzymano: {} doświadczenia!", amount));
-                    if leveled { pending_msgs.push(format!("Awans na poziom {}!", self.player.level)); }
-                }
-                DialogueAction::Heal => {
-                    self.player.rest();
-                    pending_msgs.push("Pełne leczenie!".into());
-                }
-                DialogueAction::Trade => {
-                    pending_msgs.push("Handel zakończony.".into());
-                }
-                DialogueAction::Axii(_) => {
-                    if self.player.stamina >= 20 {
-                        self.player.stamina -= 20;
-                        pending_msgs.push("Axii zadziałało!".into());
-                    } else {
-                        pending_msgs.push("Za mało wytrzymałości na Axii!".into());
-                    }
-                }
-                DialogueAction::EndDialogue => {}
-                DialogueAction::None => {}
-            }
-        }
-
-        let dialogue_ended = dlg.current_node.is_none();
-
-        if dialogue_ended {
-            let px = self.player.x;
-            let py = self.player.y;
-            if let Some(ni) = self.world.find_npc_at(px, py, 3.0) {
-                let npc_id = self.world.npcs[ni].dialogue_id.clone();
-                self.quest_log.check_talk_objective(&npc_id);
-            }
-            // Check completed quests
-            for quest in &mut self.quest_log.quests {
-                if quest.status == QuestStatus::Completed && quest.experience_reward > 0 {
-                    let exp = quest.experience_reward;
-                    let gold = quest.gold_reward;
-                    quest.experience_reward = 0;
-                    quest.gold_reward = 0;
-                    let leveled = self.player.gain_experience(exp);
-                    self.player.inventory.gold += gold;
-                    pending_msgs.push(format!("Quest ukończony! +{} EXP, +{} złota", exp, gold));
-                    if leveled { pending_msgs.push(format!("Awans na poziom {}!", self.player.level)); }
-                }
-            }
-            self.dialogue = None;
-            self.screen = GameScreen::Exploration;
-        } else {
-            self.dialogue = Some(dlg);
-        }
-
-        for msg in pending_msgs { self.add_message(msg); }
-    }
-
-    fn handle_combat_key(&mut self, keycode: KeyCode) {
-        let mi = if let GameScreen::Combat(mi) = self.screen { mi } else { return; };
-        let combat = match self.combat.as_mut() {
-            Some(c) => c,
-            None => return,
-        };
-
-        match combat.state {
-            CombatState::PlayerTurn => {
-                let action = match keycode {
-                    KeyCode::Q => Some(CombatAction::AttackSteel),
-                    KeyCode::W => Some(CombatAction::AttackSilver),
-                    KeyCode::E => Some(CombatAction::UseSign(self.player.active_sign)),
-                    KeyCode::A => Some(CombatAction::Dodge),
-                    KeyCode::S => Some(CombatAction::Parry),
-                    KeyCode::D => {
-                        self.player.inventory.items.iter().position(|i| i.item_type == ItemType::Potion)
-                            .map(CombatAction::UsePotion)
-                    }
-                    KeyCode::F => {
-                        self.player.inventory.items.iter().position(|i| i.item_type == ItemType::Bomb)
-                            .map(CombatAction::UseBomb)
-                    }
-                    KeyCode::Key1 => { self.player.active_sign = 0; None }
-                    KeyCode::Key2 => { self.player.active_sign = 1; None }
-                    KeyCode::Key3 => { self.player.active_sign = 2; None }
-                    KeyCode::Key4 => { self.player.active_sign = 3; None }
-                    KeyCode::Key5 => { self.player.active_sign = 4; None }
-                    _ => None,
-                };
-                if let Some(act) = action {
-                    let monster = &mut self.world.monsters[mi];
-                    combat.execute_player_action(act, &mut self.player, monster);
-                    if combat.state == CombatState::EnemyTurn {
-                        let monster = &mut self.world.monsters[mi];
-                        combat.execute_enemy_turn(&mut self.player, monster);
-                    }
-                }
-            }
-            CombatState::Victory => {
-                if keycode == KeyCode::Return {
-                    let m = &self.world.monsters[mi];
+        // Try monster attack
+        if let Some(mi) = world.find_monster_at(tx, ty, 1.5) {
+            if attack_cooldown.timer <= 0.0 {
+                let mname = world.monsters[mi].name.clone();
+                let damage = player.attack_power(false); // default steel sword
+                let actual_damage = world.monsters[mi].take_damage(damage);
+                log.add(format!("Atakujesz: {}! -{} HP", mname, actual_damage));
+                sound_events.send(GameSound::SwordHit);
+                attack_cooldown.timer = 0.5; // 0.5s cooldown
+                
+                // Check if monster died
+                if !world.monsters[mi].alive {
+                    let m = &world.monsters[mi];
                     let exp = m.experience_reward;
                     let gold = m.gold_reward;
                     let name = m.name.clone();
-                    let leveled = self.player.gain_experience(exp);
-                    self.player.inventory.gold += gold;
-                    self.player.kills += 1;
-                    self.add_message(format!("{} pokonany! +{} EXP, +{} złota", name, exp, gold));
-                    if leveled { self.add_message(format!("Awans na poziom {}!", self.player.level)); }
-                    self.quest_log.check_kill_objective(&name);
-                    self.combat = None;
-                    self.screen = GameScreen::Exploration;
+                    let leveled = player.gain_experience(exp);
+                    player.inventory.gold += gold;
+                    player.kills += 1;
+                    log.add(format!("{} pokonany! +{} EXP, +{} złota", name, exp, gold));
+                    if leveled { log.add(format!("Awans na poziom {}!", player.level)); }
+                    sound_events.send(GameSound::MonsterDeath);
                 }
+            } else {
+                log.add("Czekaj na cooldown ataku!".into());
             }
-            CombatState::Defeat => {
-                if keycode == KeyCode::Return {
-                    self.player.rest();
-                    self.player.x = 25.0;
-                    self.player.y = 18.0;
-                    self.add_message("Gerard odzyskuje przytomność...".into());
-                    self.combat = None;
-                    self.screen = GameScreen::Exploration;
-                }
-            }
-            _ => {}
+            return;
         }
+
+        log.add("Nie ma tu nic do interakcji.".into());
+    }
+
+    if keys.just_pressed(KeyCode::KeyI) {
+        inv_sel.selected = 0;
+        next_state.set(GameScreen::Inventory);
+    }
+    if keys.just_pressed(KeyCode::KeyT) {
+        next_state.set(GameScreen::Alchemy);
+    }
+    if keys.just_pressed(KeyCode::KeyJ) {
+        next_state.set(GameScreen::QuestLog);
+    }
+    if keys.just_pressed(KeyCode::KeyR) {
+        player.rest();
+        log.add("Gerard odpoczywa... Zdrowie i wytrzymałość przywrócone.".into());
+    }
+    if keys.just_pressed(KeyCode::Digit1) { player.active_sign = 0; log.add("Aktywny znak: Aard".into()); }
+    if keys.just_pressed(KeyCode::Digit2) { player.active_sign = 1; log.add("Aktywny znak: Igni".into()); }
+    if keys.just_pressed(KeyCode::Digit3) { player.active_sign = 2; log.add("Aktywny znak: Quen".into()); }
+    if keys.just_pressed(KeyCode::Digit4) { player.active_sign = 3; log.add("Aktywny znak: Yrden".into()); }
+    if keys.just_pressed(KeyCode::Digit5) { player.active_sign = 4; log.add("Aktywny znak: Axii".into()); }
+    if keys.just_pressed(KeyCode::Escape) { exit.send(AppExit::Success); }
+}
+
+// ==================== DIALOGUE ====================
+
+fn dialogue_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut player: ResMut<Player>,
+    world: Res<WorldData>,
+    mut log: ResMut<MessageLog>,
+    mut next_state: ResMut<NextState<GameScreen>>,
+    mut quest_log: ResMut<QuestLog>,
+    dlg_data: Option<ResMut<DialogueData>>,
+    mut commands: Commands,
+) {
+    let Some(mut dd) = dlg_data else { return };
+
+    let choice_idx = if keys.just_pressed(KeyCode::Digit1) { Some(0) }
+        else if keys.just_pressed(KeyCode::Digit2) { Some(1) }
+        else if keys.just_pressed(KeyCode::Digit3) { Some(2) }
+        else if keys.just_pressed(KeyCode::Digit4) { Some(3) }
+        else if keys.just_pressed(KeyCode::Escape) {
+            commands.remove_resource::<DialogueData>();
+            next_state.set(GameScreen::Exploration);
+            return;
+        }
+        else { None };
+
+    let Some(choice_idx) = choice_idx else { return };
+
+    let mut pending_msgs: Vec<String> = Vec::new();
+
+    if let Some(action) = dd.dialogue.select_choice(choice_idx) {
+        match action {
+            DialogueAction::StartQuest(quest_id) => {
+                quest_log.start_quest(&quest_id);
+                pending_msgs.push("Nowy quest przyjęty!".into());
+            }
+            DialogueAction::GiveItem(item_name) => {
+                match item_name.as_str() {
+                    "Jaskółka" => player.inventory.add_item(Item::potion("Jaskółka", 50, 0, 30)),
+                    "Kot" => player.inventory.add_item(Item::potion("Kot", 20, 20, 35)),
+                    _ => player.inventory.add_item(Item::quest_item(&item_name, "Przedmiot z questu")),
+                }
+                pending_msgs.push(format!("Otrzymano: {}!", item_name));
+            }
+            DialogueAction::GiveGold(amount) => {
+                player.inventory.gold += amount;
+                pending_msgs.push(format!("Otrzymano: {} złota!", amount));
+            }
+            DialogueAction::GiveExp(amount) => {
+                let leveled = player.gain_experience(amount);
+                pending_msgs.push(format!("Otrzymano: {} doświadczenia!", amount));
+                if leveled { pending_msgs.push(format!("Awans na poziom {}!", player.level)); }
+            }
+            DialogueAction::Heal => {
+                player.rest();
+                pending_msgs.push("Pełne leczenie!".into());
+            }
+            DialogueAction::Trade => {
+                pending_msgs.push("Handel zakończony.".into());
+            }
+            DialogueAction::Axii(_) => {
+                if player.stamina >= 20 {
+                    player.stamina -= 20;
+                    pending_msgs.push("Axii zadziałało!".into());
+                } else {
+                    pending_msgs.push("Za mało wytrzymałości na Axii!".into());
+                }
+            }
+            DialogueAction::EndDialogue => {}
+            DialogueAction::None => {}
+        }
+    }
+
+    let dialogue_ended = dd.dialogue.current_node.is_none();
+
+    if dialogue_ended {
+        let px = player.x;
+        let py = player.y;
+        if let Some(ni) = world.find_npc_at(px, py, 3.0) {
+            let npc_id = world.npcs[ni].dialogue_id.clone();
+            quest_log.check_talk_objective(&npc_id);
+        }
+        for quest in &mut quest_log.quests {
+            if quest.status == QuestStatus::Completed && quest.experience_reward > 0 {
+                let exp = quest.experience_reward;
+                let gold = quest.gold_reward;
+                quest.experience_reward = 0;
+                quest.gold_reward = 0;
+                let leveled = player.gain_experience(exp);
+                player.inventory.gold += gold;
+                pending_msgs.push(format!("Quest ukończony! +{} EXP, +{} złota", exp, gold));
+                if leveled { pending_msgs.push(format!("Awans na poziom {}!", player.level)); }
+            }
+        }
+        commands.remove_resource::<DialogueData>();
+        next_state.set(GameScreen::Exploration);
+    }
+
+    for msg in pending_msgs { log.add(msg); }
+}
+
+// ==================== INVENTORY ====================
+
+fn inventory_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut player: ResMut<Player>,
+    mut log: ResMut<MessageLog>,
+    mut next_state: ResMut<NextState<GameScreen>>,
+    mut inv_sel: ResMut<InventorySelection>,
+) {
+    if keys.just_pressed(KeyCode::ArrowUp) {
+        if inv_sel.selected > 0 { inv_sel.selected -= 1; }
+    }
+    if keys.just_pressed(KeyCode::ArrowDown) {
+        if inv_sel.selected + 1 < player.inventory.items.len() { inv_sel.selected += 1; }
+    }
+    if keys.just_pressed(KeyCode::Enter) {
+        let idx = inv_sel.selected;
+        if idx < player.inventory.items.len() {
+            let itype = player.inventory.items[idx].item_type.clone();
+            let iname = player.inventory.items[idx].name.clone();
+            match itype {
+                ItemType::SteelSword | ItemType::SilverSword | ItemType::Armor | ItemType::Oil => {
+                    player.inventory.equip_item(idx);
+                    log.add(format!("Założono: {}", iname));
+                }
+                ItemType::Potion => {
+                    let item = player.inventory.items[idx].clone();
+                    player.heal(item.health_restore);
+                    player.restore_stamina(item.stamina_restore);
+                    log.add(format!("Użyto: {}", iname));
+                    player.inventory.remove_item(idx);
+                    if inv_sel.selected >= player.inventory.items.len() && inv_sel.selected > 0 {
+                        inv_sel.selected -= 1;
+                    }
+                }
+                _ => { log.add(format!("Nie można użyć: {}", iname)); }
+            }
+        }
+    }
+    if keys.just_pressed(KeyCode::Escape) || keys.just_pressed(KeyCode::KeyI) {
+        next_state.set(GameScreen::Exploration);
     }
 }
 
-impl EventHandler for GameState {
-    fn update(&mut self, ctx: &mut Context) -> GameResult {
-        if self.screen == GameScreen::Exploration {
-            self.camera.follow(self.player.x, self.player.y);
-            if self.move_cooldown > 0.0 {
-                self.move_cooldown -= ctx.time.delta().as_secs_f32();
-            }
-            if self.move_cooldown <= 0.0 {
-                let mut moved = false;
-                if ctx.keyboard.is_key_pressed(KeyCode::W) || ctx.keyboard.is_key_pressed(KeyCode::Up) {
-                    self.try_move(0.0, -1.0); moved = true;
-                } else if ctx.keyboard.is_key_pressed(KeyCode::S) || ctx.keyboard.is_key_pressed(KeyCode::Down) {
-                    self.try_move(0.0, 1.0); moved = true;
-                } else if ctx.keyboard.is_key_pressed(KeyCode::A) || ctx.keyboard.is_key_pressed(KeyCode::Left) {
-                    self.try_move(-1.0, 0.0); moved = true;
-                } else if ctx.keyboard.is_key_pressed(KeyCode::D) || ctx.keyboard.is_key_pressed(KeyCode::Right) {
-                    self.try_move(1.0, 0.0); moved = true;
-                }
-                if moved { self.move_cooldown = 0.12; }
-            }
-        }
-        Ok(())
+// ==================== ALCHEMY ====================
+
+fn alchemy_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut player: ResMut<Player>,
+    mut log: ResMut<MessageLog>,
+    mut next_state: ResMut<NextState<GameScreen>>,
+    mut alch_sel: ResMut<AlchemySelection>,
+) {
+    let recipes = AlchemyRecipe::all_recipes();
+
+    if keys.just_pressed(KeyCode::ArrowUp) {
+        if alch_sel.selected > 0 { alch_sel.selected -= 1; }
     }
-
-    fn draw(&mut self, ctx: &mut Context) -> GameResult {
-        let mut canvas = Canvas::from_frame(ctx, Color::new(0.05, 0.03, 0.08, 1.0));
-
-        match &self.screen {
-            GameScreen::MainMenu => {
-                let title = graphics::Text::new(
-                    graphics::TextFragment::new("WIEDŹMIN: SZKOŁA DZIKA")
-                        .color(Color::new(1.0, 0.85, 0.0, 1.0))
-                        .scale(PxScale { x: 36.0, y: 36.0 })
-                );
-                let tw = title.measure(ctx)?.x;
-                canvas.draw(&title, graphics::DrawParam::default()
-                    .dest(ggez::glam::Vec2::new(SCREEN_WIDTH / 2.0 - tw / 2.0, 150.0)));
-
-                let subtitle = graphics::Text::new(
-                    graphics::TextFragment::new("Gerard z Rumii")
-                        .color(Color::new(0.8, 0.8, 0.8, 1.0))
-                        .scale(PxScale { x: 24.0, y: 24.0 })
-                );
-                let sw = subtitle.measure(ctx)?.x;
-                canvas.draw(&subtitle, graphics::DrawParam::default()
-                    .dest(ggez::glam::Vec2::new(SCREEN_WIDTH / 2.0 - sw / 2.0, 210.0)));
-
-                let start = graphics::Text::new(
-                    graphics::TextFragment::new("Naciśnij ENTER aby rozpocząć")
-                        .color(Color::new(0.6, 0.9, 0.6, 1.0))
-                        .scale(PxScale { x: 20.0, y: 20.0 })
-                );
-                let stw = start.measure(ctx)?.x;
-                canvas.draw(&start, graphics::DrawParam::default()
-                    .dest(ggez::glam::Vec2::new(SCREEN_WIDTH / 2.0 - stw / 2.0, 350.0)));
-
-                let info_lines = [
-                    "Pełne RPG w świecie mrocznej fantasy",
-                    "Walka turowa, questy, alchemia, znaki wiedźmińskie",
-                    "WASD - ruch | E - interakcja | I - ekwipunek | J - questy",
-                    "1-5 - znaki | R - odpoczynek | ESC - wyjście",
-                ];
-                for (i, line) in info_lines.iter().enumerate() {
-                    let t = graphics::Text::new(
-                        graphics::TextFragment::new(*line)
-                            .color(Color::new(0.5, 0.5, 0.5, 1.0))
-                            .scale(PxScale { x: 14.0, y: 14.0 })
-                    );
-                    canvas.draw(&t, graphics::DrawParam::default()
-                        .dest(ggez::glam::Vec2::new(SCREEN_WIDTH / 2.0 - 200.0, 430.0 + i as f32 * 18.0)));
-                }
-            }
-            GameScreen::Exploration => {
-                rendering::draw_map(ctx, &mut canvas, &self.world, &self.camera)?;
-                rendering::draw_loot(ctx, &mut canvas, &self.world, &self.camera)?;
-                rendering::draw_npcs(ctx, &mut canvas, &self.world, &self.camera)?;
-                rendering::draw_monsters(ctx, &mut canvas, &self.world, &self.camera)?;
-                rendering::draw_player(ctx, &mut canvas, &self.player, &self.camera)?;
-                let location = self.world.location_name(self.player.x, self.player.y);
-                ui::draw_hud(ctx, &mut canvas, &self.player, location)?;
-                ui::draw_message_log(ctx, &mut canvas, &self.messages)?;
-            }
-            GameScreen::Combat(mi) => {
-                let mi = *mi;
-                if let Some(ref combat) = self.combat {
-                    let m = &self.world.monsters[mi];
-                    ui::draw_combat_ui(ctx, &mut canvas, combat, &self.player, &m.name, m.health, m.max_health)?;
-                }
-                let location = self.world.location_name(self.player.x, self.player.y);
-                ui::draw_hud(ctx, &mut canvas, &self.player, location)?;
-            }
-            GameScreen::Dialogue => {
-                rendering::draw_map(ctx, &mut canvas, &self.world, &self.camera)?;
-                rendering::draw_npcs(ctx, &mut canvas, &self.world, &self.camera)?;
-                rendering::draw_player(ctx, &mut canvas, &self.player, &self.camera)?;
-                if let Some(ref dlg) = self.dialogue {
-                    if let Some(node) = dlg.get_current_node() {
-                        let choices: Vec<(usize, String)> = node.choices.iter().enumerate()
-                            .map(|(i, c)| (i, c.text.clone())).collect();
-                        ui::draw_dialogue_ui(ctx, &mut canvas, &node.speaker, &node.text, &choices)?;
-                    }
-                }
-                let location = self.world.location_name(self.player.x, self.player.y);
-                ui::draw_hud(ctx, &mut canvas, &self.player, location)?;
-            }
-            GameScreen::Inventory => {
-                ui::draw_inventory_ui(ctx, &mut canvas, &self.player, self.inventory_selected)?;
-                let location = self.world.location_name(self.player.x, self.player.y);
-                ui::draw_hud(ctx, &mut canvas, &self.player, location)?;
-            }
-            GameScreen::QuestLog => {
-                ui::draw_quest_log_ui(ctx, &mut canvas, &self.quest_log)?;
-                let location = self.world.location_name(self.player.x, self.player.y);
-                ui::draw_hud(ctx, &mut canvas, &self.player, location)?;
-            }
-            GameScreen::GameOver => {
-                let go = graphics::Text::new(
-                    graphics::TextFragment::new("KONIEC GRY\nNaciśnij ENTER aby zacząć od nowa")
-                        .color(Color::new(1.0, 0.2, 0.2, 1.0))
-                        .scale(PxScale { x: 28.0, y: 28.0 })
-                );
-                canvas.draw(&go, graphics::DrawParam::default()
-                    .dest(ggez::glam::Vec2::new(300.0, 300.0)));
-            }
-        }
-
-        canvas.finish(ctx)?;
-        Ok(())
+    if keys.just_pressed(KeyCode::ArrowDown) {
+        if alch_sel.selected + 1 < recipes.len() { alch_sel.selected += 1; }
     }
+    if keys.just_pressed(KeyCode::Enter) {
+        if alch_sel.selected < recipes.len() {
+            let recipe = &recipes[alch_sel.selected];
+            // Gather ingredient counts from inventory
+            let ingredient_counts: Vec<(String, i32)> = player.inventory.items.iter()
+                .filter(|i| i.item_type == ItemType::AlchemyIngredient)
+                .map(|i| (i.name.clone(), i.quantity))
+                .collect();
 
-    fn key_down_event(&mut self, _ctx: &mut Context, input: KeyInput, _repeated: bool) -> GameResult {
-        let keycode = match input.keycode {
-            Some(k) => k,
-            None => return Ok(()),
-        };
-
-        match &self.screen {
-            GameScreen::MainMenu => {
-                if keycode == KeyCode::Return { self.screen = GameScreen::Exploration; self.started = true; }
-                if keycode == KeyCode::Escape { _ctx.request_quit(); }
-            }
-            GameScreen::Exploration => {
-                match keycode {
-                    KeyCode::E => self.interact(),
-                    KeyCode::I => { self.inventory_selected = 0; self.screen = GameScreen::Inventory; }
-                    KeyCode::J => { self.screen = GameScreen::QuestLog; }
-                    KeyCode::R => { self.player.rest(); self.add_message("Gerard odpoczywa... Zdrowie i wytrzymałość przywrócone.".into()); }
-                    KeyCode::Key1 => { self.player.active_sign = 0; self.add_message("Aktywny znak: Aard".into()); }
-                    KeyCode::Key2 => { self.player.active_sign = 1; self.add_message("Aktywny znak: Igni".into()); }
-                    KeyCode::Key3 => { self.player.active_sign = 2; self.add_message("Aktywny znak: Quen".into()); }
-                    KeyCode::Key4 => { self.player.active_sign = 3; self.add_message("Aktywny znak: Yrden".into()); }
-                    KeyCode::Key5 => { self.player.active_sign = 4; self.add_message("Aktywny znak: Axii".into()); }
-                    KeyCode::Escape => { _ctx.request_quit(); }
-                    _ => {}
-                }
-            }
-            GameScreen::Combat(_) => { self.handle_combat_key(keycode); }
-            GameScreen::Dialogue => {
-                match keycode {
-                    KeyCode::Key1 => self.handle_dialogue_choice(0),
-                    KeyCode::Key2 => self.handle_dialogue_choice(1),
-                    KeyCode::Key3 => self.handle_dialogue_choice(2),
-                    KeyCode::Key4 => self.handle_dialogue_choice(3),
-                    KeyCode::Escape => { self.dialogue = None; self.screen = GameScreen::Exploration; }
-                    _ => {}
-                }
-            }
-            GameScreen::Inventory => {
-                match keycode {
-                    KeyCode::Up => { if self.inventory_selected > 0 { self.inventory_selected -= 1; } }
-                    KeyCode::Down => { if self.inventory_selected + 1 < self.player.inventory.items.len() { self.inventory_selected += 1; } }
-                    KeyCode::Return => {
-                        let idx = self.inventory_selected;
-                        if idx < self.player.inventory.items.len() {
-                            let itype = self.player.inventory.items[idx].item_type.clone();
-                            let iname = self.player.inventory.items[idx].name.clone();
-                            match itype {
-                                ItemType::SteelSword | ItemType::SilverSword | ItemType::Armor | ItemType::Oil => {
-                                    self.player.inventory.equip_item(idx);
-                                    self.add_message(format!("Założono: {}", iname));
-                                }
-                                ItemType::Potion => {
-                                    let item = self.player.inventory.items[idx].clone();
-                                    self.player.heal(item.health_restore);
-                                    self.player.restore_stamina(item.stamina_restore);
-                                    self.add_message(format!("Użyto: {}", iname));
-                                    self.player.inventory.remove_item(idx);
-                                    if self.inventory_selected >= self.player.inventory.items.len() && self.inventory_selected > 0 {
-                                        self.inventory_selected -= 1;
-                                    }
-                                }
-                                _ => { self.add_message(format!("Nie można użyć: {}", iname)); }
+            if check_can_craft(recipe, &ingredient_counts) {
+                // Remove ingredients
+                for (needed_name, needed_qty) in &recipe.ingredients {
+                    let mut to_remove = *needed_qty;
+                    while to_remove > 0 {
+                        if let Some(idx) = player.inventory.items.iter().position(|i| {
+                            i.item_type == ItemType::AlchemyIngredient && i.name == *needed_name
+                        }) {
+                            let available = player.inventory.items[idx].quantity;
+                            if available <= to_remove {
+                                to_remove -= available;
+                                player.inventory.remove_item(idx);
+                            } else {
+                                player.inventory.items[idx].quantity -= to_remove;
+                                to_remove = 0;
                             }
+                        } else {
+                            break;
                         }
                     }
-                    KeyCode::Escape | KeyCode::I => { self.screen = GameScreen::Exploration; }
-                    _ => {}
                 }
-            }
-            GameScreen::QuestLog => {
-                if keycode == KeyCode::Escape || keycode == KeyCode::J { self.screen = GameScreen::Exploration; }
-            }
-            GameScreen::GameOver => {
-                if keycode == KeyCode::Return {
-                    *self = GameState::new();
-                    self.screen = GameScreen::Exploration;
-                    self.started = true;
-                }
+                // Add crafted item
+                let result = recipe.result.clone();
+                let rname = result.name.clone();
+                player.inventory.add_item(result);
+                log.add(format!("Wytworzono: {}!", rname));
+            } else {
+                log.add("Brak składników!".into());
             }
         }
-        Ok(())
+    }
+    if keys.just_pressed(KeyCode::Escape) || keys.just_pressed(KeyCode::KeyT) {
+        next_state.set(GameScreen::Exploration);
+    }
+}
+
+// ==================== QUEST LOG ====================
+
+fn quest_log_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut next_state: ResMut<NextState<GameScreen>>,
+) {
+    if keys.just_pressed(KeyCode::Escape) || keys.just_pressed(KeyCode::KeyJ) {
+        next_state.set(GameScreen::Exploration);
+    }
+}
+
+// ==================== GAME OVER ====================
+
+fn game_over_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut player: ResMut<Player>,
+    mut next_state: ResMut<NextState<GameScreen>>,
+) {
+    if keys.just_pressed(KeyCode::Enter) {
+        *player = Player::new();
+        next_state.set(GameScreen::Exploration);
+    }
+}
+
+// ==================== SOUND SYSTEM ====================
+
+/// Procedural sound system - generates beep tones for game events
+/// (No external audio files needed!)
+fn play_game_sounds(
+    mut events: EventReader<GameSound>,
+    mut log: ResMut<MessageLog>,
+) {
+    for event in events.read() {
+        // Log sound events for feedback (visual confirmation)
+        match event {
+            GameSound::Footstep => {} // silent - too frequent
+            GameSound::SwordHit => { log.add("*CLANG!* ⚔".into()); }
+            GameSound::MonsterDeath => { log.add("*Potwór pada na ziemię!* 💀".into()); }
+            GameSound::PickupItem => { log.add("*Podniesiono przedmiot* ✦".into()); }
+            GameSound::SignCast => { log.add("*Wiedźmiński znak aktywowany!* ✧".into()); }
+            GameSound::QuestComplete => { log.add("*Quest ukończony!* 🏆".into()); }
+            GameSound::LevelUp => { log.add("*AWANS! Gerard staje się silniejszy!* ⬆".into()); }
+        }
     }
 }

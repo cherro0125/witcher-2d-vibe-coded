@@ -1,7 +1,8 @@
-/// Mapa świata - lokacje, kafelki, NPC
+/// Mapa świata 3D - lokacje, kafelki, NPC
+use bevy::prelude::*;
 use crate::monsters::Monster;
 
-pub const TILE_SIZE: f32 = 24.0;
+pub const TILE_SIZE: f32 = 1.0; // 1 unit = 1 tile in 3D
 pub const MAP_WIDTH: usize = 60;
 pub const MAP_HEIGHT: usize = 40;
 
@@ -26,7 +27,39 @@ impl TileType {
         !matches!(self, TileType::Water | TileType::Wall | TileType::Mountain)
     }
 
-    pub fn color(&self) -> [f32; 4] {
+    pub fn color(&self) -> Color {
+        match self {
+            TileType::Grass => Color::srgba(0.2, 0.7, 0.2, 1.0),
+            TileType::Forest => Color::srgba(0.1, 0.4, 0.1, 1.0),
+            TileType::Water => Color::srgba(0.1, 0.3, 0.8, 1.0),
+            TileType::Road => Color::srgba(0.6, 0.55, 0.4, 1.0),
+            TileType::Building => Color::srgba(0.55, 0.35, 0.2, 1.0),
+            TileType::Wall => Color::srgba(0.4, 0.4, 0.4, 1.0),
+            TileType::Door => Color::srgba(0.6, 0.4, 0.15, 1.0),
+            TileType::Bridge => Color::srgba(0.5, 0.4, 0.25, 1.0),
+            TileType::Swamp => Color::srgba(0.3, 0.45, 0.2, 1.0),
+            TileType::Mountain => Color::srgba(0.5, 0.5, 0.5, 1.0),
+            TileType::Cave => Color::srgba(0.25, 0.2, 0.2, 1.0),
+            TileType::Sand => Color::srgba(0.85, 0.8, 0.5, 1.0),
+        }
+    }
+
+    /// Height of the 3D tile (Y axis in Bevy)
+    pub fn height(&self) -> f32 {
+        match self {
+            TileType::Water => -0.3,
+            TileType::Swamp => -0.1,
+            TileType::Wall => 1.5,
+            TileType::Mountain => 2.0,
+            TileType::Building => 0.4,
+            TileType::Forest => 0.0, // trees are separate
+            TileType::Cave => -0.2,
+            _ => 0.0,
+        }
+    }
+
+    /// Color as [f32; 4] array (for minimap UI)
+    pub fn color_array(&self) -> [f32; 4] {
         match self {
             TileType::Grass => [0.2, 0.7, 0.2, 1.0],
             TileType::Forest => [0.1, 0.4, 0.1, 1.0],
@@ -41,6 +74,11 @@ impl TileType {
             TileType::Cave => [0.25, 0.2, 0.2, 1.0],
             TileType::Sand => [0.85, 0.8, 0.5, 1.0],
         }
+    }
+
+    /// Extra 3D objects to spawn on this tile (e.g., trees)
+    pub fn has_tree(&self) -> bool {
+        matches!(self, TileType::Forest)
     }
 }
 
@@ -64,8 +102,22 @@ pub struct Loot {
     pub collected: bool,
 }
 
-#[derive(Debug, Clone)]
-pub struct WorldMap {
+/// Marker components for 3D entities
+#[derive(Component)]
+pub struct TileMarker;
+
+#[derive(Component)]
+pub struct TreeMarker;
+
+#[derive(Component)]
+pub struct NpcMarker(pub usize);
+
+#[derive(Component)]
+pub struct LootMarker(pub usize);
+
+/// World data stored as a Bevy Resource
+#[derive(Resource, Clone)]
+pub struct WorldData {
     pub tiles: Vec<Vec<TileType>>,
     pub npcs: Vec<Npc>,
     pub monsters: Vec<Monster>,
@@ -74,17 +126,17 @@ pub struct WorldMap {
     pub height: usize,
 }
 
-impl WorldMap {
+impl WorldData {
     pub fn new() -> Self {
         let mut tiles = vec![vec![TileType::Grass; MAP_WIDTH]; MAP_HEIGHT];
 
         // === Drogi ===
         for x in 0..MAP_WIDTH {
-            tiles[18][x] = TileType::Road; // główna droga pozioma
+            tiles[18][x] = TileType::Road;
             tiles[19][x] = TileType::Road;
         }
         for y in 0..MAP_HEIGHT {
-            tiles[y][30] = TileType::Road; // droga pionowa
+            tiles[y][30] = TileType::Road;
         }
 
         // === Wioska Rumia (lewy górny) ===
@@ -97,12 +149,10 @@ impl WorldMap {
                 }
             }
         }
-        tiles[9][8] = TileType::Door; // wejście do wioski
-        // Domki wewnątrz
+        tiles[9][8] = TileType::Door;
         for y in 4..6 { for x in 5..8 { tiles[y][x] = TileType::Building; } }
         for y in 4..6 { for x in 10..13 { tiles[y][x] = TileType::Building; } }
         for y in 7..9 { for x in 5..8 { tiles[y][x] = TileType::Building; } }
-        // Droga do wioski
         for y in 10..18 { tiles[y][8] = TileType::Road; }
 
         // === Las (prawy górny) ===
@@ -135,7 +185,7 @@ impl WorldMap {
                 }
             }
         }
-        tiles[28][33] = TileType::Door; // wejście do jaskini
+        tiles[28][33] = TileType::Door;
 
         // === Zamek (prawy dolny) ===
         for y in 26..38 {
@@ -147,8 +197,7 @@ impl WorldMap {
                 }
             }
         }
-        tiles[26][50] = TileType::Door; // brama zamku
-        // Wieże
+        tiles[26][50] = TileType::Door;
         for y in 27..30 { for x in 45..48 { tiles[y][x] = TileType::Wall; } }
         for y in 27..30 { for x in 54..57 { tiles[y][x] = TileType::Wall; } }
 
@@ -161,7 +210,6 @@ impl WorldMap {
                 if rx + 1 < MAP_WIDTH { tiles[y][rx + 1] = TileType::Water; }
             }
         }
-        // Most
         tiles[18][22] = TileType::Bridge;
         tiles[18][23] = TileType::Bridge;
         tiles[19][22] = TileType::Bridge;
@@ -169,31 +217,11 @@ impl WorldMap {
 
         // === NPC ===
         let npcs = vec![
-            Npc {
-                name: "Sołtys Bogdan".into(), x: 6.0, y: 5.0,
-                dialogue_id: "soltys".into(), quest_giver: true, merchant: false,
-                color: [0.9, 0.8, 0.3, 1.0],
-            },
-            Npc {
-                name: "Handlarz Mirek".into(), x: 11.0, y: 5.0,
-                dialogue_id: "handlarz".into(), quest_giver: false, merchant: true,
-                color: [0.3, 0.7, 0.9, 1.0],
-            },
-            Npc {
-                name: "Zielarka Bożena".into(), x: 6.0, y: 8.0,
-                dialogue_id: "zielarka".into(), quest_giver: true, merchant: true,
-                color: [0.4, 0.9, 0.4, 1.0],
-            },
-            Npc {
-                name: "Stary Wiedźmin Vesimir".into(), x: 50.0, y: 30.0,
-                dialogue_id: "vesimir".into(), quest_giver: true, merchant: false,
-                color: [0.9, 0.9, 0.9, 1.0],
-            },
-            Npc {
-                name: "Tajemniczy Elf".into(), x: 45.0, y: 8.0,
-                dialogue_id: "elf".into(), quest_giver: true, merchant: false,
-                color: [0.5, 0.9, 0.7, 1.0],
-            },
+            Npc { name: "Sołtys Bogdan".into(), x: 6.0, y: 5.0, dialogue_id: "soltys".into(), quest_giver: true, merchant: false, color: [0.9, 0.8, 0.3, 1.0] },
+            Npc { name: "Handlarz Mirek".into(), x: 11.0, y: 5.0, dialogue_id: "handlarz".into(), quest_giver: false, merchant: true, color: [0.3, 0.7, 0.9, 1.0] },
+            Npc { name: "Zielarka Bożena".into(), x: 6.0, y: 8.0, dialogue_id: "zielarka".into(), quest_giver: true, merchant: true, color: [0.4, 0.9, 0.4, 1.0] },
+            Npc { name: "Stary Wiedźmin Vesimir".into(), x: 50.0, y: 30.0, dialogue_id: "vesimir".into(), quest_giver: true, merchant: false, color: [0.9, 0.9, 0.9, 1.0] },
+            Npc { name: "Tajemniczy Elf".into(), x: 45.0, y: 8.0, dialogue_id: "elf".into(), quest_giver: true, merchant: false, color: [0.5, 0.9, 0.7, 1.0] },
         ];
 
         // === Potwory ===
@@ -213,7 +241,7 @@ impl WorldMap {
             Monster::leszen(44.0, 6.0, 6),
         ];
 
-        // === Loot (przedmioty do zebrania) ===
+        // === Loot ===
         let loot = vec![
             Loot { name: "Jaskier".into(), x: 36.0, y: 4.0, item_name: "Jaskier".into(), collected: false },
             Loot { name: "Jaskier".into(), x: 40.0, y: 7.0, item_name: "Jaskier".into(), collected: false },
@@ -229,7 +257,7 @@ impl WorldMap {
             Loot { name: "Rdest".into(), x: 16.0, y: 27.0, item_name: "Rdest".into(), collected: false },
         ];
 
-        WorldMap { tiles, npcs, monsters, loot, width: MAP_WIDTH, height: MAP_HEIGHT }
+        WorldData { tiles, npcs, monsters, loot, width: MAP_WIDTH, height: MAP_HEIGHT }
     }
 
     pub fn get_tile(&self, x: usize, y: usize) -> TileType {

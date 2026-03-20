@@ -1,9 +1,9 @@
 [package]
 name = "witcher_game"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Gra RPG w stylu Wiedźmin - Gerard z Rumii ze szkoły Dzika"
+description = "Gra RPG 3D w stylu Wiedźmin - Gerard z Rumii ze szkoły Dzika (Bevy 3D)"
 
 [dependencies]
-ggez = "0.9"
+bevy = { version = "0.15", features = ["default_font"] }
 rand = "0.8"

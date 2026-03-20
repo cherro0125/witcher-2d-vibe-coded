@@ -1,4 +1,5 @@
 /// Postać gracza - Gerard z Rumii ze szkoły Dzika
+use bevy::prelude::*;
 use crate::signs::{Sign, SignType};
 use crate::inventory::Inventory;
 
@@ -10,7 +11,12 @@ pub enum Direction {
     Right,
 }
 
-#[derive(Debug, Clone)]
+/// Marker component for the player entity in the 3D world
+#[derive(Component)]
+pub struct PlayerMarker;
+
+/// Player data stored as a Bevy Resource
+#[derive(Resource, Debug, Clone)]
 pub struct Player {
     pub name: String,
     pub school: String,
@@ -30,6 +36,10 @@ pub struct Player {
     // Pozycja na mapie
     pub x: f32,
     pub y: f32,
+    pub target_x: f32,
+    pub target_y: f32,
+    pub visual_x: f32,
+    pub visual_y: f32,
     pub direction: Direction,
 
     // Znaki wiedźmińskie
@@ -40,7 +50,7 @@ pub struct Player {
     pub inventory: Inventory,
 
     // Status
-    pub quen_shield: i32,  // ilość obrażeń pochłoniętych przez Quen
+    pub quen_shield: i32,
     pub yrden_active: bool,
     pub kills: i32,
     pub quests_completed: i32,
@@ -65,6 +75,10 @@ impl Player {
 
             x: 25.0,
             y: 18.0,
+            target_x: 25.0,
+            target_y: 18.0,
+            visual_x: 25.0,
+            visual_y: 18.0,
             direction: Direction::Down,
 
             signs: Sign::all_signs(),
@@ -135,7 +149,6 @@ impl Player {
         let defense = self.defense_power();
         let mut actual_damage = (damage - defense / 2).max(1);
 
-        // Quen pochłania obrażenia
         if self.quen_shield > 0 {
             if self.quen_shield >= actual_damage {
                 self.quen_shield -= actual_damage;
@@ -170,7 +183,6 @@ impl Player {
     }
 
     pub fn regenerate_tick(&mut self) {
-        // Powolna regeneracja wytrzymałości
         self.stamina = (self.stamina + 1).min(self.max_stamina);
     }
 }

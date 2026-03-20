@@ -3,11 +3,11 @@ use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SignType {
-    Aard,   // Odrzut - telekinetyczny podmuch
-    Igni,   // Ogień - strumień płomieni
-    Quen,   // Tarcza - ochronna bariera
-    Yrden,  // Pułapka - magiczny krąg spowalniający
-    Axii,   // Kontrola umysłu - oszołomienie
+    Aard,
+    Igni,
+    Quen,
+    Yrden,
+    Axii,
 }
 
 impl fmt::Display for SignType {
