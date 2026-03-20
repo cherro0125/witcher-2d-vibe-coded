@@ -164,14 +164,19 @@ fn exploration_movement(
 
     cooldown.timer = 0.12;
 
-    // Camera-relative movement: rotate input by the camera's absolute yaw
+    // Camera-relative movement
+    // Camera sits at position: player + (sin(yaw), height, cos(yaw)) * distance
+    // So camera's forward direction (toward player) is (-sin(yaw), 0, -cos(yaw))
+    // W (input_z=-1) should move player AWAY from camera = in camera's forward direction
     let cam_yaw = orbit.yaw;
+    let forward_x = -cam_yaw.sin();
+    let forward_z = -cam_yaw.cos();
+    let right_x = cam_yaw.cos();
+    let right_z = -cam_yaw.sin();
 
-    // Rotate input vector by camera yaw
-    let cos_y = cam_yaw.cos();
-    let sin_y = cam_yaw.sin();
-    let world_x = input_x * cos_y - input_z * sin_y;
-    let world_z = input_x * sin_y + input_z * cos_y;
+    // Transform input to world space (W=-z=forward, D=+x=right)
+    let world_x = forward_x * (-input_z) + right_x * input_x;
+    let world_z = forward_z * (-input_z) + right_z * input_x;
 
     // Snap to grid: pick dominant axis direction
     let (dx, dy, dir) = if world_z.abs() >= world_x.abs() {

@@ -197,19 +197,26 @@ fn setup_3d_world(
     let wall_mesh = meshes.add(Cuboid::new(0.98, 1.5, 0.98));
     let mountain_mesh = meshes.add(Cuboid::new(0.98, 2.0, 0.98));
     let building_mesh = meshes.add(Cuboid::new(0.98, 0.5, 0.98));
-    let tree_trunk_mesh = meshes.add(Cylinder::new(0.08, 0.8));
+    let tree_trunk_mesh = meshes.add(Capsule3d::new(0.06, 0.7));
     let tree_crown_mesh = meshes.add(Sphere::new(0.35));
+    let tree_crown_top_mesh = meshes.add(Sphere::new(0.25));
     let npc_mesh = meshes.add(Cuboid::new(0.35, 1.0, 0.35));
     let loot_mesh = meshes.add(Sphere::new(0.15));
 
-    // Player body parts
-    let torso_mesh = meshes.add(Cuboid::new(0.4, 0.6, 0.25));
-    let head_mesh = meshes.add(Sphere::new(0.18));
-    let leg_mesh = meshes.add(Cuboid::new(0.15, 0.5, 0.15));
-    let arm_mesh = meshes.add(Cuboid::new(0.12, 0.5, 0.12));
-    let sword_blade_mesh = meshes.add(Cuboid::new(0.03, 0.7, 0.06));
-    let sword_handle_mesh = meshes.add(Cuboid::new(0.04, 0.15, 0.04));
-    let hair_mesh_asset = meshes.add(Cuboid::new(0.2, 0.06, 0.28));
+    // Player body parts — smoother shapes using capsules and spheres
+    let torso_mesh = meshes.add(Capsule3d::new(0.18, 0.35));
+    let head_mesh = meshes.add(Sphere::new(0.16));
+    let leg_mesh = meshes.add(Capsule3d::new(0.06, 0.35));
+    let arm_mesh = meshes.add(Capsule3d::new(0.05, 0.35));
+    let shoulder_mesh = meshes.add(Sphere::new(0.08));
+    let boot_mesh = meshes.add(Capsule3d::new(0.07, 0.08));
+    let hand_mesh = meshes.add(Sphere::new(0.05));
+    let sword_blade_mesh = meshes.add(Capsule3d::new(0.015, 0.65));
+    let sword_guard_mesh = meshes.add(Cuboid::new(0.12, 0.02, 0.03));
+    let sword_handle_mesh = meshes.add(Capsule3d::new(0.02, 0.12));
+    let hair_mesh_asset = meshes.add(Sphere::new(0.17));
+    let belt_mesh = meshes.add(Torus::new(0.15, 0.18));
+    let medallion_mesh = meshes.add(Sphere::new(0.03));
 
     // === Materials ===
     let tree_trunk_mat = materials.add(StandardMaterial {
@@ -287,21 +294,58 @@ fn setup_3d_world(
             ));
 
             if tile.has_tree() {
+                // Use tile position for pseudo-random tree variation
+                let seed = (tx * 7 + ty * 13) as f32;
+                let trunk_lean = (seed * 0.3).sin() * 0.08;
+                let crown_scale = 0.9 + (seed * 0.7).sin().abs() * 0.3;
+                // Trunk
                 commands.spawn((
                     Mesh3d(tree_trunk_mesh.clone()),
                     MeshMaterial3d(tree_trunk_mat.clone()),
-                    Transform::from_xyz(tx as f32, 0.5, ty as f32),
+                    Transform::from_xyz(tx as f32 + trunk_lean, 0.5, ty as f32),
                     TreeMarker,
                 ));
+                // Lower crown (larger)
                 commands.spawn((
                     Mesh3d(tree_crown_mesh.clone()),
                     MeshMaterial3d(tree_crown_mat.clone()),
-                    Transform::from_xyz(tx as f32, 1.1, ty as f32),
+                    Transform::from_xyz(tx as f32, 1.05, ty as f32)
+                        .with_scale(Vec3::splat(crown_scale)),
+                    TreeMarker,
+                ));
+                // Upper crown (smaller, offset)
+                commands.spawn((
+                    Mesh3d(tree_crown_top_mesh.clone()),
+                    MeshMaterial3d(tree_crown_mat.clone()),
+                    Transform::from_xyz(tx as f32 + trunk_lean * 0.5, 1.4, ty as f32)
+                        .with_scale(Vec3::splat(crown_scale * 0.85)),
                     TreeMarker,
                 ));
             }
         }
     }
+
+    // Additional materials for details
+    let guard_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.5, 0.45, 0.3, 1.0),
+        metallic: 0.8,
+        ..default()
+    });
+    let boot_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.2, 0.15, 0.1, 1.0),
+        perceptual_roughness: 0.95,
+        ..default()
+    });
+    let belt_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.3, 0.2, 0.1, 1.0),
+        ..default()
+    });
+    let medallion_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.8, 0.7, 0.2, 1.0),
+        metallic: 1.0,
+        emissive: LinearRgba::new(0.5, 0.4, 0.0, 1.0),
+        ..default()
+    });
 
     // === Spawn Player ===
     commands.spawn((
@@ -309,53 +353,103 @@ fn setup_3d_world(
         Visibility::default(),
         PlayerMarker,
     )).with_children(|parent| {
-        // Torso
+        // Torso (capsule — smooth)
         parent.spawn((
             Mesh3d(torso_mesh.clone()),
             MeshMaterial3d(armor_mat.clone()),
             Transform::from_xyz(0.0, 0.85, 0.0),
         ));
-        // Head
+        // Belt
+        parent.spawn((
+            Mesh3d(belt_mesh.clone()),
+            MeshMaterial3d(belt_mat.clone()),
+            Transform::from_xyz(0.0, 0.6, 0.0)
+                .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+        ));
+        // Head (sphere)
         parent.spawn((
             Mesh3d(head_mesh.clone()),
             MeshMaterial3d(skin_mat.clone()),
-            Transform::from_xyz(0.0, 1.35, 0.0),
+            Transform::from_xyz(0.0, 1.3, 0.0),
         ));
-        // Hair
+        // Hair (sphere — slightly larger, behind head)
         parent.spawn((
             Mesh3d(hair_mesh_asset.clone()),
             MeshMaterial3d(hair_mat.clone()),
-            Transform::from_xyz(0.0, 1.5, -0.02),
+            Transform::from_xyz(0.0, 1.38, -0.04)
+                .with_scale(Vec3::new(1.05, 0.7, 1.15)),
         ));
-        // Left leg
+        // Witcher medallion on chest
+        parent.spawn((
+            Mesh3d(medallion_mesh.clone()),
+            MeshMaterial3d(medallion_mat.clone()),
+            Transform::from_xyz(0.0, 1.0, 0.16),
+        ));
+        // Left shoulder
+        parent.spawn((
+            Mesh3d(shoulder_mesh.clone()),
+            MeshMaterial3d(armor_mat.clone()),
+            Transform::from_xyz(-0.24, 1.08, 0.0),
+        ));
+        // Right shoulder
+        parent.spawn((
+            Mesh3d(shoulder_mesh.clone()),
+            MeshMaterial3d(armor_mat.clone()),
+            Transform::from_xyz(0.24, 1.08, 0.0),
+        ));
+        // Left leg (capsule)
         parent.spawn((
             Mesh3d(leg_mesh.clone()),
             MeshMaterial3d(pants_mat.clone()),
-            Transform::from_xyz(-0.1, 0.3, 0.0),
-            PlayerLimb { is_left: true, is_leg: true, base_y: 0.3 },
+            Transform::from_xyz(-0.09, 0.32, 0.0),
+            PlayerLimb { is_left: true, is_leg: true, base_y: 0.32 },
         ));
-        // Right leg
+        // Right leg (capsule)
         parent.spawn((
             Mesh3d(leg_mesh.clone()),
             MeshMaterial3d(pants_mat.clone()),
-            Transform::from_xyz(0.1, 0.3, 0.0),
-            PlayerLimb { is_left: false, is_leg: true, base_y: 0.3 },
+            Transform::from_xyz(0.09, 0.32, 0.0),
+            PlayerLimb { is_left: false, is_leg: true, base_y: 0.32 },
         ));
-        // Left arm
+        // Left boot
+        parent.spawn((
+            Mesh3d(boot_mesh.clone()),
+            MeshMaterial3d(boot_mat.clone()),
+            Transform::from_xyz(-0.09, 0.07, 0.02),
+        ));
+        // Right boot
+        parent.spawn((
+            Mesh3d(boot_mesh.clone()),
+            MeshMaterial3d(boot_mat.clone()),
+            Transform::from_xyz(0.09, 0.07, 0.02),
+        ));
+        // Left arm (capsule)
         parent.spawn((
             Mesh3d(arm_mesh.clone()),
             MeshMaterial3d(skin_mat.clone()),
-            Transform::from_xyz(-0.28, 0.85, 0.0),
-            PlayerLimb { is_left: true, is_leg: false, base_y: 0.85 },
+            Transform::from_xyz(-0.26, 0.82, 0.0),
+            PlayerLimb { is_left: true, is_leg: false, base_y: 0.82 },
         ));
-        // Right arm
+        // Right arm (capsule)
         parent.spawn((
             Mesh3d(arm_mesh.clone()),
             MeshMaterial3d(skin_mat.clone()),
-            Transform::from_xyz(0.28, 0.85, 0.0),
-            PlayerLimb { is_left: false, is_leg: false, base_y: 0.85 },
+            Transform::from_xyz(0.26, 0.82, 0.0),
+            PlayerLimb { is_left: false, is_leg: false, base_y: 0.82 },
         ));
-        // Steel sword (back, left)
+        // Left hand
+        parent.spawn((
+            Mesh3d(hand_mesh.clone()),
+            MeshMaterial3d(skin_mat.clone()),
+            Transform::from_xyz(-0.26, 0.56, 0.0),
+        ));
+        // Right hand
+        parent.spawn((
+            Mesh3d(hand_mesh.clone()),
+            MeshMaterial3d(skin_mat.clone()),
+            Transform::from_xyz(0.26, 0.56, 0.0),
+        ));
+        // Steel sword (back, left) — blade + guard + handle
         parent.spawn((
             Mesh3d(sword_blade_mesh.clone()),
             MeshMaterial3d(steel_blade_mat.clone()),
@@ -364,13 +458,18 @@ fn setup_3d_world(
             SwordMarker { is_steel: true, is_blade: true },
         ));
         parent.spawn((
+            Mesh3d(sword_guard_mesh.clone()),
+            MeshMaterial3d(guard_mat.clone()),
+            Transform::from_xyz(-0.12, 0.88, -0.18),
+        ));
+        parent.spawn((
             Mesh3d(sword_handle_mesh.clone()),
             MeshMaterial3d(handle_mat.clone()),
-            Transform::from_xyz(-0.12, 0.82, -0.18)
+            Transform::from_xyz(-0.12, 0.78, -0.18)
                 .with_rotation(Quat::from_rotation_z(0.15)),
             SwordMarker { is_steel: true, is_blade: false },
         ));
-        // Silver sword (back, right)
+        // Silver sword (back, right) — blade + guard + handle
         parent.spawn((
             Mesh3d(sword_blade_mesh.clone()),
             MeshMaterial3d(silver_blade_mat.clone()),
@@ -379,17 +478,26 @@ fn setup_3d_world(
             SwordMarker { is_steel: false, is_blade: true },
         ));
         parent.spawn((
+            Mesh3d(sword_guard_mesh.clone()),
+            MeshMaterial3d(guard_mat.clone()),
+            Transform::from_xyz(0.12, 0.88, -0.18),
+        ));
+        parent.spawn((
             Mesh3d(sword_handle_mesh.clone()),
             MeshMaterial3d(handle_mat.clone()),
-            Transform::from_xyz(0.12, 0.82, -0.18)
+            Transform::from_xyz(0.12, 0.78, -0.18)
                 .with_rotation(Quat::from_rotation_z(-0.15)),
             SwordMarker { is_steel: false, is_blade: false },
         ));
     });
 
-    // === Spawn NPCs (with head and clothing details) ===
+    // === Spawn NPCs (smooth capsule bodies with details) ===
+    let npc_body_mesh = meshes.add(Capsule3d::new(0.16, 0.5));
     let npc_head_mesh = meshes.add(Sphere::new(0.14));
-    let npc_hat_mesh = meshes.add(Cuboid::new(0.3, 0.06, 0.3));
+    let npc_leg_mesh = meshes.add(Capsule3d::new(0.05, 0.3));
+    let npc_arm_mesh = meshes.add(Capsule3d::new(0.04, 0.28));
+    let npc_hat_mesh = meshes.add(Torus::new(0.08, 0.2));
+    let npc_hat_top_mesh = meshes.add(Sphere::new(0.1));
     let npc_skin_mat = materials.add(StandardMaterial {
         base_color: Color::srgba(0.85, 0.7, 0.55, 1.0),
         ..default()
@@ -400,26 +508,47 @@ fn setup_3d_world(
             base_color: Color::srgba(npc.color[0], npc.color[1], npc.color[2], npc.color[3]),
             ..default()
         });
-        // Body
         commands.spawn((
             Transform::from_xyz(npc.x, 0.0, npc.y),
             Visibility::default(),
             NpcMarker(i),
         )).with_children(|parent| {
-            // Torso
+            // Torso (capsule)
             parent.spawn((
-                Mesh3d(npc_mesh.clone()),
+                Mesh3d(npc_body_mesh.clone()),
                 MeshMaterial3d(npc_mat.clone()),
-                Transform::from_xyz(0.0, 0.6, 0.0),
+                Transform::from_xyz(0.0, 0.7, 0.0),
             ));
             // Head
             parent.spawn((
                 Mesh3d(npc_head_mesh.clone()),
                 MeshMaterial3d(npc_skin_mat.clone()),
-                Transform::from_xyz(0.0, 1.25, 0.0),
+                Transform::from_xyz(0.0, 1.15, 0.0),
                 NpcHead,
             ));
-            // Hat (for quest givers) or bag (for merchants)
+            // Legs
+            parent.spawn((
+                Mesh3d(npc_leg_mesh.clone()),
+                MeshMaterial3d(npc_mat.clone()),
+                Transform::from_xyz(-0.08, 0.22, 0.0),
+            ));
+            parent.spawn((
+                Mesh3d(npc_leg_mesh.clone()),
+                MeshMaterial3d(npc_mat.clone()),
+                Transform::from_xyz(0.08, 0.22, 0.0),
+            ));
+            // Arms
+            parent.spawn((
+                Mesh3d(npc_arm_mesh.clone()),
+                MeshMaterial3d(npc_skin_mat.clone()),
+                Transform::from_xyz(-0.22, 0.7, 0.0),
+            ));
+            parent.spawn((
+                Mesh3d(npc_arm_mesh.clone()),
+                MeshMaterial3d(npc_skin_mat.clone()),
+                Transform::from_xyz(0.22, 0.7, 0.0),
+            ));
+            // Hat (quest giver — torus + sphere top)
             if npc.quest_giver {
                 let hat_mat = materials.add(StandardMaterial {
                     base_color: Color::srgba(0.6, 0.2, 0.1, 1.0),
@@ -427,12 +556,18 @@ fn setup_3d_world(
                 });
                 parent.spawn((
                     Mesh3d(npc_hat_mesh.clone()),
+                    MeshMaterial3d(hat_mat.clone()),
+                    Transform::from_xyz(0.0, 1.3, 0.0)
+                        .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                ));
+                parent.spawn((
+                    Mesh3d(npc_hat_top_mesh.clone()),
                     MeshMaterial3d(hat_mat),
-                    Transform::from_xyz(0.0, 1.42, 0.0),
+                    Transform::from_xyz(0.0, 1.35, 0.0),
                 ));
             }
             if npc.merchant {
-                let bag_mesh = meshes.add(Cuboid::new(0.15, 0.2, 0.1));
+                let bag_mesh = meshes.add(Capsule3d::new(0.06, 0.12));
                 let bag_mat = materials.add(StandardMaterial {
                     base_color: Color::srgba(0.5, 0.35, 0.1, 1.0),
                     ..default()
@@ -440,18 +575,20 @@ fn setup_3d_world(
                 parent.spawn((
                     Mesh3d(bag_mesh),
                     MeshMaterial3d(bag_mat),
-                    Transform::from_xyz(0.22, 0.5, 0.0),
+                    Transform::from_xyz(0.22, 0.55, -0.05),
                 ));
             }
         });
     }
 
-    // === Spawn Monsters (with horns, wings, tails) ===
+    // === Spawn Monsters (smooth shapes with horns, wings, tails) ===
     use crate::monsters::MonsterType;
-    let horn_mesh = meshes.add(Cuboid::new(0.04, 0.25, 0.04));
-    let wing_mesh = meshes.add(Cuboid::new(0.5, 0.3, 0.03));
-    let tail_mesh = meshes.add(Cuboid::new(0.06, 0.06, 0.4));
+    let horn_mesh = meshes.add(Capsule3d::new(0.02, 0.2));
+    let wing_mesh = meshes.add(Capsule3d::new(0.02, 0.45));
+    let tail_mesh = meshes.add(Capsule3d::new(0.03, 0.35));
     let eye_mesh = meshes.add(Sphere::new(0.05));
+    let claw_mesh = meshes.add(Capsule3d::new(0.015, 0.1));
+    let fang_mesh = meshes.add(Capsule3d::new(0.01, 0.06));
 
     let eye_mat = materials.add(StandardMaterial {
         base_color: Color::srgba(1.0, 0.0, 0.0, 1.0),
@@ -460,9 +597,16 @@ fn setup_3d_world(
         ..default()
     });
 
+    let fang_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.95, 0.95, 0.9, 1.0),
+        ..default()
+    });
+
     for (i, monster) in world.monsters.iter().enumerate() {
         let h = monster.monster_type.height();
-        let m_mesh = meshes.add(Cuboid::new(0.4, h, 0.4));
+        // Use capsule for body — smoother look
+        let m_mesh = meshes.add(Capsule3d::new(0.2, h * 0.6));
+        let m_head_mesh = meshes.add(Sphere::new(h * 0.22));
         let m_color = monster.monster_type.color();
         let m_mat = materials.add(StandardMaterial {
             base_color: m_color,
@@ -474,11 +618,30 @@ fn setup_3d_world(
             Visibility::default(),
             MonsterMarker(i),
         )).with_children(|parent| {
-            // Body
+            // Body (capsule)
             parent.spawn((
                 Mesh3d(m_mesh),
                 MeshMaterial3d(m_mat.clone()),
                 Transform::from_xyz(0.0, h / 2.0 + 0.1, 0.0),
+            ));
+            // Head (sphere)
+            parent.spawn((
+                Mesh3d(m_head_mesh),
+                MeshMaterial3d(m_mat.clone()),
+                Transform::from_xyz(0.0, h + 0.05, 0.12),
+            ));
+            // Fangs
+            parent.spawn((
+                Mesh3d(fang_mesh.clone()),
+                MeshMaterial3d(fang_mat.clone()),
+                Transform::from_xyz(-0.06, h - 0.02, 0.25)
+                    .with_rotation(Quat::from_rotation_x(0.3)),
+            ));
+            parent.spawn((
+                Mesh3d(fang_mesh.clone()),
+                MeshMaterial3d(fang_mat.clone()),
+                Transform::from_xyz(0.06, h - 0.02, 0.25)
+                    .with_rotation(Quat::from_rotation_x(0.3)),
             ));
             // Glowing eyes (all monsters)
             parent.spawn((
@@ -536,21 +699,34 @@ fn setup_3d_world(
                     ));
                 }
                 MonsterType::Kikimora | MonsterType::Endriaga => {
-                    // Extra legs (insectoid)
+                    // Extra legs (insectoid) — smooth capsules
                     let leg_mat = materials.add(StandardMaterial {
                         base_color: Color::srgba(m_color.to_srgba().red * 0.6, m_color.to_srgba().green * 0.6, m_color.to_srgba().blue * 0.6, 1.0),
                         ..default()
                     });
-                    let insect_leg = meshes.add(Cuboid::new(0.04, 0.04, 0.3));
+                    let insect_leg = meshes.add(Capsule3d::new(0.02, 0.25));
                     for side in [-1.0_f32, 1.0] {
-                        for offset in [0.1_f32, -0.1] {
+                        for (j, offset) in [0.12_f32, -0.04, -0.2].iter().enumerate() {
                             parent.spawn((
                                 Mesh3d(insect_leg.clone()),
                                 MeshMaterial3d(leg_mat.clone()),
-                                Transform::from_xyz(side * 0.25, h * 0.3, offset)
-                                    .with_rotation(Quat::from_rotation_z(side * 0.5)),
+                                Transform::from_xyz(side * 0.25, h * 0.3 + j as f32 * 0.1, *offset)
+                                    .with_rotation(Quat::from_euler(EulerRot::XYZ, 0.3, 0.0, side * 0.6)),
                             ));
                         }
+                    }
+                    // Claws at front
+                    let claw_mat = materials.add(StandardMaterial {
+                        base_color: Color::srgba(0.3, 0.25, 0.2, 1.0),
+                        ..default()
+                    });
+                    for side in [-1.0_f32, 1.0] {
+                        parent.spawn((
+                            Mesh3d(claw_mesh.clone()),
+                            MeshMaterial3d(claw_mat.clone()),
+                            Transform::from_xyz(side * 0.15, h * 0.5, 0.25)
+                                .with_rotation(Quat::from_rotation_x(-0.5)),
+                        ));
                     }
                 }
                 _ => {
